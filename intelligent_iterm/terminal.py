@@ -27,14 +27,35 @@ class ItermTerminal:
         self.on_failure = on_failure
         self._last: Dict[str, Dict[str, Any]] = {}            # session_id -> last command
         self._failures: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._last_in_tab: Dict[str, str] = {}  # tab_id -> last focused terminal session
+        # Set by Dock: tells panel (browser) sessions apart from terminals.
+        self.is_panel: Callable[[str], bool] = lambda _sid: False
 
     # ---- active session --------------------------------------------------
 
     def active_session(self) -> Optional[iterm2.Session]:
+        """The terminal the panel is about: the focused session, or — when the
+        focus is in a docked panel — the terminal last used in that tab."""
         # current_terminal_window is None while iTerm2 isn't the frontmost app.
         window = self.app.current_terminal_window or next(iter(self.app.terminal_windows), None)
         tab = window.current_tab if window else None
-        return tab.current_session if tab else None
+        session = tab.current_session if tab else None
+        if tab is not None and session is not None and self.is_panel(session.session_id):
+            last = self._last_in_tab.get(tab.tab_id)
+            session = self.app.get_session_by_id(last) if last and not self.is_panel(last) else None
+            if session is None:
+                session = next((s for s in tab.sessions if not self.is_panel(s.session_id)), None)
+        return session
+
+    def remember_terminal(self, tab_id: str, session_id: str) -> None:
+        self._last_in_tab[tab_id] = session_id
+
+    def _remember_focus(self, session_id: str) -> None:
+        if self.is_panel(session_id):
+            return
+        session = self.app.get_session_by_id(session_id)
+        if session is not None and session.tab is not None:
+            self._last_in_tab[session.tab.tab_id] = session_id
 
     # ---- theme: make the panel look like the terminal next to it -------------
 
@@ -53,9 +74,13 @@ class ItermTerminal:
             "font": font or None, "size": float(size) if size.replace(".", "").isdigit() else None,
         }
 
-    async def watch_theme(self, on_theme: Callable[[Dict[str, Any]], None]) -> None:
-        """Re-send the theme whenever the active session (and so maybe profile) changes."""
+    async def watch_focus(self, on_theme: Callable[[Dict[str, Any]], None]) -> None:
+        """Track the last focused terminal per tab, and re-send the theme whenever
+        the active session (and so maybe its profile) changes."""
         last = None
+        current = self.active_session()
+        if current is not None:
+            self._remember_focus(current.session_id)
         async with iterm2.FocusMonitor(self.connection) as mon:
             while True:
                 try:
@@ -65,7 +90,9 @@ class ItermTerminal:
                         on_theme(theme)
                 except Exception:  # noqa: BLE001 - session went away mid-read
                     log.info("theme read failed", exc_info=True)
-                await mon.async_get_next_update()
+                update = await mon.async_get_next_update()
+                if update.active_session_changed:
+                    self._remember_focus(update.active_session_changed.session_id)
 
     # ---- watching for finished commands -------------------------------------
 
@@ -183,6 +210,7 @@ class ItermTerminal:
         if session is None:
             raise RuntimeError("no active terminal session")
         await session.async_send_text(command, suppress_broadcast=True)
+        await session.async_activate()  # focus the terminal so Enter is one keypress away
 
 
 def _css(color: Any) -> Optional[str]:
