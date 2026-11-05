@@ -148,6 +148,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   it sits under the one you were in. Its size is set once, to about 35% of that pane; drag
   the divider to change it. The dock depends on iTerm2's browser profiles (tested on 3.7.7; the
   `browserProfiles` advanced setting, on by default).
+- **The docked panel grays out when it isn't focused.** iTerm2 dims inactive browser panes
+  with a gray overlay and ignores "Dimming affects only text" for them. Only the global
+  settings under Settings > Appearance > Dimming change this: lower *Dimming amount*, or
+  untick *Dim inactive split panes*.
 - **Ctrl+Shift+.** is captured from every terminal session while the script runs, so
   programs in the terminal no longer receive it.
 
