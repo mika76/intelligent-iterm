@@ -64,6 +64,10 @@ class ItermTerminal:
         if session is None:
             return None
         p = await session.async_get_profile()
+        if p.all_properties.get("Custom Command") == "Browser":
+            # A browser pane (e.g. the panel, before Dock registered it): its
+            # profile colors aren't the terminal's. Keep the current theme.
+            return None
         font, _, size = (p.normal_font or "").rpartition(" ")
         return {
             "bg": _css(p.background_color), "fg": _css(p.foreground_color),
