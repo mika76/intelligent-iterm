@@ -5,86 +5,126 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Panel</title>
 <style>
+  /* Defaults; replaced at runtime by the active iTerm2 profile's colors and font. */
   :root {
-    --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --border: #d9d9de;
-    --bubble: #f2f2f5; --code-bg: #f6f6f8; --accent: #c15f3c; --accent-fg: #fff;
-    --danger: #c0392b; --danger-bg: #fdecea;
+    --bg: #ffffff; --fg: #1d1d1f; --dim: #8a8a8e; --accent: #2f6fd6;
+    --red: #c0392b; --green: #2e8b3e; --yellow: #a07800;
+    --font: ui-monospace, Menlo, monospace; --size: 13px;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #1e1e1e; --fg: #e6e6e6; --muted: #9a9a9a; --border: #3a3a3a;
-      --bubble: #2a2a2d; --code-bg: #141414; --accent: #d97757; --accent-fg: #fff;
-      --danger: #ff7b6b; --danger-bg: #3a2220;
+    :root:not([data-theme]) {
+      --bg: #1e1e1e; --fg: #e6e6e6; --dim: #8a8a8a; --accent: #4c9aff;
+      --red: #ff7b6b; --green: #5fd37a; --yellow: #e5c07b;
     }
+  }
+  :root {
+    --surface: color-mix(in srgb, var(--fg) 6%, var(--bg));
+    --border: color-mix(in srgb, var(--fg) 16%, var(--bg));
+    --small: calc(var(--size) * 0.85);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg); color: var(--fg);
-    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    font-family: var(--font); font-size: var(--size); line-height: 1.4;
     display: flex; flex-direction: column;
   }
-  header {
-    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  header .title { font-weight: 600; }
-  header .status { color: var(--muted); font-size: 11px; flex: 1; overflow: hidden;
-    white-space: nowrap; text-overflow: ellipsis; }
+  ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
   button {
-    font: inherit; font-size: 12px; border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bubble); color: var(--fg); padding: 3px 8px; cursor: pointer;
+    font: inherit; font-size: var(--small); color: var(--fg); background: transparent;
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; cursor: pointer;
   }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { opacity: .5; cursor: default; }
-  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-  #log { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--bg)); }
+  button.link { border: none; padding: 0 2px; color: var(--dim); }
+
+  /* Title strip, like a pane title */
+  header {
+    display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+    border-bottom: 1px solid var(--border); font-size: var(--small); color: var(--dim);
+  }
+  header .title { color: var(--fg); }
+  header .title::before { content: "✳ "; color: var(--accent); }
+  header .status { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* Transcript */
+  #log { flex: 1; overflow-y: auto; padding: 8px 10px 12px; display: flex; flex-direction: column; gap: 8px; }
   .msg { overflow-wrap: anywhere; }
-  .msg.user { align-self: flex-end; max-width: 90%; background: var(--bubble);
-    padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; }
-  .msg.user .ctx { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .msg.user { color: var(--fg); white-space: pre-wrap; padding-left: 1.5ch; text-indent: -1.5ch; }
+  .msg.user::before { content: "❯ "; color: var(--accent); }
+  .msg.user .ctx { display: block; text-indent: 0; color: var(--dim); font-size: var(--small); }
   .msg.agent p { margin: 0 0 6px; }
   .msg.agent p:last-child { margin-bottom: 0; }
-  .note { color: var(--muted); font-size: 11px; }
-  .note.error { color: var(--danger); }
-  code { font: 12px ui-monospace, Menlo, monospace; background: var(--code-bg);
-    padding: 1px 4px; border-radius: 4px; }
-  .codeblock { border: 1px solid var(--border); border-radius: 6px; margin: 6px 0; overflow: hidden; }
-  .codeblock pre { margin: 0; padding: 8px; background: var(--code-bg); overflow-x: auto;
-    font: 12px/1.4 ui-monospace, Menlo, monospace; }
-  .codeblock .bar { display: flex; gap: 6px; justify-content: flex-end; padding: 4px 6px;
-    border-top: 1px solid var(--border); }
-  .card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
-  .card.fail { border-color: var(--danger); background: var(--danger-bg); }
+  .note { color: var(--dim); font-size: var(--small); }
+  .note.error { color: var(--red); }
+  .note.tool { padding-left: 1ch; }
+  code { font: inherit; color: var(--accent); }
+  strong { font-weight: 700; }
+  .codeblock { background: var(--surface); border-left: 2px solid var(--accent); margin: 6px 0; }
+  .codeblock pre { margin: 0; padding: 6px 8px; overflow-x: auto; font: inherit; }
+  .codeblock .bar { display: flex; gap: 6px; justify-content: flex-end; padding: 0 6px 6px; }
+  .card { border: 1px solid var(--border); border-left: 2px solid var(--yellow); padding: 6px 8px; }
   .card .row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
-  .card code { background: transparent; padding: 0; }
-  footer { border-top: 1px solid var(--border); padding: 8px 10px; }
-  textarea {
-    width: 100%; resize: none; min-height: 52px; max-height: 160px; font: inherit;
-    color: var(--fg); background: var(--bubble); border: 1px solid var(--border);
-    border-radius: 8px; padding: 6px 8px;
+  .thinking { color: var(--dim); font-size: var(--small); }
+  .thinking::after { content: "▍"; animation: blink 1s steps(1) infinite; color: var(--fg); }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Status bar: latest failed command, like Intelligent Terminal's agent status bar */
+  #failbar {
+    display: none; align-items: center; gap: 8px; padding: 4px 10px;
+    border-top: 1px solid var(--border); font-size: var(--small);
+    background: color-mix(in srgb, var(--red) 10%, var(--bg));
   }
-  textarea:focus { outline: none; border-color: var(--accent); }
-  .controls { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; }
-  .controls label { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+  #failbar.show { display: flex; }
+  #failbar .x { color: var(--red); }
+  #failbar .cmd { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* Prompt-style input */
+  footer { border-top: 1px solid var(--border); padding: 6px 10px 6px; }
+  .prompt { display: flex; gap: 1ch; align-items: flex-start; }
+  .prompt .glyph { color: var(--accent); line-height: 1.4; }
+  textarea {
+    flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--fg);
+    font: inherit; line-height: 1.4; padding: 0; min-height: 2.8em; max-height: 10em;
+    caret-color: var(--cursor, var(--fg));
+  }
+  textarea::placeholder { color: var(--dim); }
+  .controls { display: flex; align-items: center; gap: 12px; margin-top: 4px;
+    font-size: var(--small); color: var(--dim); }
+  .controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .controls input { accent-color: var(--accent); margin: 0; }
   .controls .spacer { flex: 1; }
 </style>
 </head>
 <body>
 <header>
-  <span class="title">Claude</span>
-  <span class="status" id="status">Connecting…</span>
-  <button id="newchat" title="Start a fresh conversation">New chat</button>
+  <span class="title">Claude Code</span>
+  <span class="status" id="status">connecting…</span>
+  <button id="newchat" class="link" title="Start a fresh conversation">new</button>
 </header>
 <main id="log"></main>
+<div id="failbar">
+  <span class="x">✗</span>
+  <span class="cmd" id="failtext"></span>
+  <button id="explain" class="primary" data-needs-idle="1">Explain</button>
+  <button id="failclose" class="link" title="Dismiss">✕</button>
+</div>
 <footer>
-  <textarea id="input" placeholder="Ask about your terminal… (Enter to send, Shift+Enter for newline)"></textarea>
+  <div class="prompt">
+    <span class="glyph">❯</span>
+    <textarea id="input" placeholder="Ask about your terminal…"></textarea>
+  </div>
   <div class="controls">
     <label title="Send the active session's directory, last command, exit status and output">
-      <input type="checkbox" id="attach"> Attach context</label>
+      <input type="checkbox" id="attach"> context</label>
     <label title="Also send the visible screen with the next message">
-      <input type="checkbox" id="screen"> + screen</label>
+      <input type="checkbox" id="screen"> screen</label>
     <span class="spacer"></span>
+    <span id="hint">⏎ send</span>
     <button id="send" class="primary">Send</button>
   </div>
 </footer>
@@ -93,7 +133,7 @@
 const token = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
 const log = $("log"), input = $("input"), sendBtn = $("send");
-let busy = false, agentEl = null, agentText = "";
+let busy = false, agentEl = null, agentText = "", thinkingEl = null, lastFailure = null;
 
 // ---- small helpers -------------------------------------------------------
 function store(key, value) {
@@ -106,7 +146,7 @@ async function api(path, body) {
     body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => ({ ok: false, error: res.statusText }));
-  if (!data.ok) note(data.error || "Request failed", true);
+  if (!data.ok) note(data.error || "Request failed", "error");
   return data;
 }
 function el(tag, cls, text) {
@@ -115,23 +155,36 @@ function el(tag, cls, text) {
   if (text !== undefined) e.textContent = text;
   return e;
 }
+function nearBottom(px) { return log.scrollHeight - log.scrollTop - log.clientHeight < px; }
 function add(node) {
-  const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  log.appendChild(node);
+  const stick = nearBottom(40);
+  log.insertBefore(node, thinkingEl && thinkingEl.parentNode ? thinkingEl : null);
   if (stick) log.scrollTop = log.scrollHeight;
   return node;
 }
-function note(text, isError) { add(el("div", "note" + (isError ? " error" : ""), text)); }
+function note(text, cls) { return add(el("div", "note" + (cls ? " " + cls : ""), text)); }
 function setBusy(b) {
   busy = b;
   sendBtn.textContent = b ? "Stop" : "Send";
-  sendBtn.classList.toggle("primary", !b);
+  $("hint").textContent = b ? "esc stop" : "⏎ send";
   document.querySelectorAll("button[data-needs-idle]").forEach((x) => (x.disabled = b));
+  if (b && !thinkingEl) { thinkingEl = el("div", "thinking", "thinking "); log.appendChild(thinkingEl); }
+  if (!b && thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
 }
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); return; } catch (e) { /* fall back */ }
   const ta = el("textarea"); ta.value = text; document.body.appendChild(ta);
   ta.select(); document.execCommand("copy"); ta.remove();
+}
+
+// ---- theme from the iTerm2 profile ---------------------------------------
+function applyTheme(t) {
+  const root = document.documentElement;
+  root.dataset.theme = "iterm";
+  const set = (k, v) => { if (v) root.style.setProperty(k, v); };
+  ["bg", "fg", "dim", "accent", "red", "green", "yellow", "cursor"].forEach((k) => set("--" + k, t[k]));
+  if (t.font) set("--font", `"${t.font}", ui-monospace, Menlo, monospace`);
+  if (t.size) set("--size", Math.max(11, Math.round(t.size * 0.82)) + "px");
 }
 
 // ---- markdown-ish rendering of agent replies -------------------------------
@@ -154,19 +207,19 @@ function codeBlock(lang, code, done) {
   if (!done) return box;
   const bar = el("div", "bar");
   const cmd = code.replace(/\n+$/, "");
-  const copyBtn = el("button", "", "Copy");
-  copyBtn.onclick = async () => { await copy(cmd); copyBtn.textContent = "Copied"; };
+  const copyBtn = el("button", "link", "copy");
+  copyBtn.onclick = async () => { await copy(cmd); copyBtn.textContent = "copied"; };
   bar.appendChild(copyBtn);
   if (SHELL_LANGS.includes(lang.toLowerCase()) && cmd.trim()) {
-    const ins = el("button", "primary", "Insert");
+    const ins = el("button", "primary", "insert ⇥");
     if (cmd.includes("\n")) {
       ins.disabled = true;
-      ins.title = "Multi-line commands can't be inserted safely; use Copy";
+      ins.title = "Multi-line commands can't be inserted safely; use copy";
     } else {
       ins.title = "Type into the active terminal session (does not press Enter)";
       ins.onclick = async () => {
         const r = await api("/api/insert", { text: cmd });
-        if (r.ok) { ins.textContent = "Inserted"; }
+        if (r.ok) ins.textContent = "inserted ✓";
       };
     }
     bar.appendChild(ins);
@@ -182,8 +235,7 @@ function renderMarkdown(src, container) {
       const nl = part.indexOf("\n");
       const lang = nl === -1 ? "" : part.slice(0, nl).trim();
       const code = nl === -1 ? "" : part.slice(nl + 1);
-      const closed = i < parts.length - 1;
-      container.appendChild(codeBlock(lang, code, closed));
+      container.appendChild(codeBlock(lang, code, i < parts.length - 1));
     } else {
       part.split(/\n{2,}/).forEach((para) => {
         if (!para.trim()) return;
@@ -198,11 +250,29 @@ function renderMarkdown(src, container) {
   });
 }
 
+// ---- failed-command status bar -------------------------------------------------
+function showFailure(f) {
+  lastFailure = f;
+  $("failtext").replaceChildren(el("code", "", f.command),
+    document.createTextNode(" exited " + f.exit));
+  $("failbar").classList.add("show");
+  $("explain").disabled = busy;
+}
+function hideFailure() { lastFailure = null; $("failbar").classList.remove("show"); }
+$("explain").onclick = async () => {
+  if (!lastFailure) return;
+  const r = await api("/api/explain", { id: lastFailure.id });
+  if (r.ok) hideFailure();
+};
+$("failclose").onclick = hideFailure;
+
 // ---- events from the server -------------------------------------------------
 function handle(ev) {
   switch (ev.type) {
+    case "theme":
+      applyTheme(ev); break;
     case "reset":
-      log.replaceChildren(); agentEl = null; setBusy(false); break;
+      log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure(); break;
     case "status":
       $("status").textContent = ev.text; break;
     case "user": {
@@ -216,20 +286,20 @@ function handle(ev) {
       if (!agentEl) { agentEl = add(el("div", "msg agent")); agentText = ""; }
       agentText += ev.text;
       renderMarkdown(agentText, agentEl);
-      if (log.scrollHeight - log.scrollTop - log.clientHeight < 120) log.scrollTop = log.scrollHeight;
+      if (nearBottom(120)) log.scrollTop = log.scrollHeight;
       break;
     case "tool": { // one line per tool call, updated in place
       let line = document.getElementById("tool-" + ev.id);
-      if (!line) { line = add(el("div", "note")); line.id = "tool-" + ev.id; agentEl = null; }
+      if (!line) { line = note("", "tool"); line.id = "tool-" + ev.id; agentEl = null; }
       if (ev.title) line.dataset.title = ev.title;
-      const mark = { completed: "✓", failed: "✗" }[ev.status] || "⚙︎";
-      line.textContent = mark + " " + (line.dataset.title || "Tool");
+      const mark = { completed: "✓", failed: "✗" }[ev.status] || "⚙";
+      line.textContent = mark + " " + (line.dataset.title || "tool");
       break;
     }
     case "permission": {
       const card = add(el("div", "card"));
       card.id = "perm-" + ev.id;
-      card.appendChild(el("div", "", "Claude wants to: " + ev.title));
+      card.appendChild(el("div", "", "Allow Claude to run: " + ev.title + "?"));
       const row = card.appendChild(el("div", "row"));
       ev.options.forEach((o) => {
         const b = el("button", o.kind && o.kind.startsWith("allow") ? "" : "primary", o.name);
@@ -243,37 +313,26 @@ function handle(ev) {
       if (card) card.querySelectorAll("button").forEach((b) => (b.disabled = true));
       break;
     }
-    case "failed_command": {
-      const card = add(el("div", "card fail"));
-      const head = card.appendChild(el("div"));
-      head.appendChild(el("code", "", ev.command));
-      head.appendChild(document.createTextNode(" exited with " + ev.exit));
-      const row = card.appendChild(el("div", "row"));
-      const b = el("button", "primary", "Explain this error");
-      b.dataset.needsIdle = "1";
-      b.disabled = busy;
-      b.onclick = () => api("/api/explain", { id: ev.id });
-      row.appendChild(b);
-      break;
-    }
+    case "failed_command":
+      showFailure(ev); break;
     case "turn_end":
       agentEl = null; setBusy(false);
-      if (ev.stopReason === "cancelled") note("Stopped.");
+      if (ev.stopReason === "cancelled") note("stopped");
       break;
     case "error":
-      note(ev.message, true); break;
+      note(ev.message, "error"); break;
   }
 }
 
 function connect() {
   const es = new EventSource("/events?t=" + encodeURIComponent(token));
   es.onopen = () => {
-    // The server replays the whole conversation on every (re)connect.
-    log.replaceChildren(); agentEl = null; setBusy(false);
-    $("status").textContent = "Ready";
+    // The server replays theme + the whole conversation on every (re)connect.
+    log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure();
+    $("status").textContent = "ready";
   };
   es.onmessage = (m) => handle(JSON.parse(m.data));
-  es.onerror = () => { $("status").textContent = "Disconnected — retrying…"; };
+  es.onerror = () => { $("status").textContent = "disconnected — retrying…"; };
 }
 
 // ---- composer ----------------------------------------------------------------
@@ -287,6 +346,7 @@ async function send() {
 sendBtn.onclick = send;
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+  if (e.key === "Escape" && busy) { e.preventDefault(); api("/api/cancel"); }
 });
 $("newchat").onclick = () => api("/api/new");
 $("attach").checked = store("attach") !== "0";

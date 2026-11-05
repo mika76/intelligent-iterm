@@ -212,9 +212,9 @@ def format_context(ctx: Dict[str, Any]) -> str:
 def context_label(ctx: Dict[str, Any]) -> str:
     bits = []
     if ctx.get("last"):
-        bits.append(f"`{ctx['last'].get('command')}` (exit {ctx['last'].get('exit')})")
+        bits.append(f"{ctx['last'].get('command')} (exit {ctx['last'].get('exit')})")
     elif ctx.get("recent"):
         bits.append("recent output")
     if ctx.get("screen"):
         bits.append("screen")
-    return "Attached: " + (", ".join(bits) if bits else "cwd only")
+    return "+ " + (", ".join(bits) if bits else "cwd")

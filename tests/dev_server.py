@@ -35,6 +35,11 @@ async def run():
     web = WebServer("dev", hub, panel.routes())
     await web.start(int(os.environ.get("PORT", "8765")))
     print("Panel at", web.url, flush=True)
+    if "--light" not in sys.argv:  # sample theme: the maintainer's iTerm2 profile
+        hub.set_sticky("theme", {"type": "theme", "bg": "#151a1f", "fg": "#dcdcdc", "dim": "#686868",
+                                 "red": "#e5534b", "green": "#00c200", "yellow": "#c7c400",
+                                 "accent": "#328eee", "selection": "#b3d7ff", "cursor": "#ffffff",
+                                 "font": "FantasqueSansMNFM-Regular", "size": 17})
     panel.command_failed(term.failure)
     await asyncio.Event().wait()
 
