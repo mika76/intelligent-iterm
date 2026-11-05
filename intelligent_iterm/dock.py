@@ -1,6 +1,9 @@
 """Bottom-docked panel: an iTerm2 *browser* split pane showing the panel page,
 toggled per tab with Ctrl+Shift+. (Intelligent Terminal's agent-pane shortcut).
 
+The split is left at iTerm2's default size: resizing it via update_layout mixes
+terminal rows with browser-pane points and makes iTerm2 resize the window.
+
 iTerm2 has browser profiles ("Custom Command" = "Browser" + "Initial URL"); we
 apply them as per-session customizations on a split, so no profile is added
 to the user's iTerm2 settings.
@@ -18,8 +21,6 @@ from .terminal import ItermTerminal
 
 log = logging.getLogger(__name__)
 
-DOCK_FRACTION = 0.35   # of the split pane's height
-MIN_ROWS = 10
 STATE_VAR = "user.claude_panel"  # per terminal session: "open" / "closed"
 
 # iTerm2 shows a URL/navigation bar on browser panes. There's no profile key or
@@ -68,13 +69,8 @@ class Dock:
             return {"state": "closed"}
         self._panels.pop(tab.tab_id, None)  # stale: closed by the user
 
-        # Live size, not the cached session.grid_size, which can lag after the
-        # panel was closed; a stale size would make update_layout shrink the window.
-        try:
-            height = int(await session.async_get_variable("rows"))
-            width = int(await session.async_get_variable("columns"))
-        except (TypeError, ValueError):
-            height = width = 0
+        window = session.window
+        frame = await window.async_get_frame() if window else None
         profile = iterm2.LocalWriteOnlyProfile()
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
         profile._simple_set("Initial URL", self.url)      # pylint: disable=protected-access
@@ -84,15 +80,12 @@ class Dock:
         self.terminal.remember_terminal(tab.tab_id, session.session_id)
         await _set_state(session, "open")
         await _set_state(panel, "open")  # the panel shows the window's status bar while focused
+        if window is not None and frame is not None:
+            # iTerm2 snaps the window to whole rows after a split, shrinking it a
+            # few points each time; put the original size back.
+            await asyncio.sleep(0.15)
+            await window.async_set_frame(frame)
 
-        if height > 2 * MIN_ROWS:
-            rows = max(MIN_ROWS, int(height * DOCK_FRACTION))
-            session.preferred_size = iterm2.Size(width, height - rows)
-            panel.preferred_size = iterm2.Size(width, rows)
-            try:
-                await tab.async_update_layout()
-            except Exception:  # noqa: BLE001 - cosmetic; the split still works
-                log.info("could not resize dock", exc_info=True)
         if os.environ.get("INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR") != "1":
             await asyncio.sleep(0.4)  # let the new pane take focus
             await hide_browser_toolbar()
