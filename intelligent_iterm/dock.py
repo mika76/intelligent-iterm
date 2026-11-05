@@ -68,7 +68,13 @@ class Dock:
             return {"state": "closed"}
         self._panels.pop(tab.tab_id, None)  # stale: closed by the user
 
-        grid = session.grid_size
+        # Live size, not the cached session.grid_size, which can lag after the
+        # panel was closed; a stale size would make update_layout shrink the window.
+        try:
+            height = int(await session.async_get_variable("rows"))
+            width = int(await session.async_get_variable("columns"))
+        except (TypeError, ValueError):
+            height = width = 0
         profile = iterm2.LocalWriteOnlyProfile()
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
         profile._simple_set("Initial URL", self.url)      # pylint: disable=protected-access
@@ -79,10 +85,10 @@ class Dock:
         await _set_state(session, "open")
         await _set_state(panel, "open")  # the panel shows the window's status bar while focused
 
-        if grid is not None and grid.height > 2 * MIN_ROWS:
-            rows = max(MIN_ROWS, int(grid.height * DOCK_FRACTION))
-            session.preferred_size = iterm2.Size(grid.width, grid.height - rows)
-            panel.preferred_size = iterm2.Size(grid.width, rows)
+        if height > 2 * MIN_ROWS:
+            rows = max(MIN_ROWS, int(height * DOCK_FRACTION))
+            session.preferred_size = iterm2.Size(width, height - rows)
+            panel.preferred_size = iterm2.Size(width, rows)
             try:
                 await tab.async_update_layout()
             except Exception:  # noqa: BLE001 - cosmetic; the split still works
