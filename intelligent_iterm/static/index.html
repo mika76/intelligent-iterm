@@ -105,6 +105,7 @@
   <span class="title">Claude Code</span>
   <span class="status" id="status">connecting…</span>
   <button id="newchat" class="link" title="Start a fresh conversation">new</button>
+  <button id="dock" class="link"></button>
 </header>
 <main id="log"></main>
 <div id="failbar">
@@ -349,6 +350,16 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && busy) { e.preventDefault(); api("/api/cancel"); }
 });
 $("newchat").onclick = () => api("/api/new");
+// Docked (bottom split) vs toolbelt: same page, the server adds dock=1 for the split.
+const docked = new URLSearchParams(location.search).get("dock") === "1";
+$("dock").textContent = docked ? "hide" : "dock ↓";
+$("dock").title = (docked ? "Close this pane" : "Open the panel below the terminal") + " (⌃⇧.)";
+$("dock").onclick = () => api("/api/dock");
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === "Period") {
+    e.preventDefault(); api("/api/dock");
+  }
+});
 $("attach").checked = store("attach") !== "0";
 $("attach").onchange = () => store("attach", $("attach").checked ? "1" : "0");
 connect();
