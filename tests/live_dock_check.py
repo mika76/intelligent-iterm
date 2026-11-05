@@ -129,6 +129,19 @@ async def main(connection):
                   "tab sessions:", [x.session_id for x in (app.get_tab_by_id(tab.tab_id) or tab).sessions])
         check("closing the pane resets the button",
               await shell.async_get_variable("user.claude_panel") == "closed" and tab.tab_id not in dock._panels)
+        # A pane iTerm2 restored from a previous run: old URL -> replaced by a fresh panel.
+        old = iterm2.LocalWriteOnlyProfile()
+        old._simple_set("Custom Command", "Browser")
+        old._simple_set("Initial URL", "http://127.0.0.1:9/?t=stale&dock=1")
+        stale = await shell.async_split_pane(vertical=False, profile_customizations=old)
+        await asyncio.sleep(1.0)
+        replaced = await dock.replace_restored_panels(windows=[window])
+        await asyncio.sleep(1.0)
+        fresh = app.get_session_by_id(dock._panels.get(tab.tab_id, ""))
+        fresh_url = (await fresh.async_get_profile()).all_properties.get("Initial URL") if fresh else None
+        check("restored panel replaced", replaced == 1 and app.get_session_by_id(stale.session_id) is None
+              and fresh_url == dock.url, (replaced, fresh_url))
+        await dock.toggle(shell)
     finally:
         focus_task.cancel()
         closed_task.cancel()
