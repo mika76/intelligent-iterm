@@ -1,0 +1,139 @@
+# intelligent-iterm
+
+A Claude side panel for iTerm2: a toolbelt pane that can see your terminal,
+explain failed commands, and suggest commands you can insert at the prompt.
+Inspired by Microsoft's Intelligent Terminal. MVP quality.
+
+```
+iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTerm2 API script)
+                                           │  reads sessions, watches prompts, types text
+                                           └─stdio JSON-RPC (ACP)─▶ claude-agent-acp ─▶ Claude Code
+```
+
+- **Agent:** Claude Code via [`@agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp)
+  (the renamed successor of `@zed-industries/claude-code-acp`), pinned in `package.json`.
+  It uses your existing Claude Code login. No keys are stored here.
+- **Script:** stdlib + the `iterm2` package only, so it runs on iTerm2's basic Python runtime.
+
+## Features
+
+1. **Chat panel** in the toolbelt with streamed replies.
+2. **Attach context** (on by default) sends the active session's directory, last command,
+   exit status and output with each message. If shell integration has no command
+   history, it sends the last 60 lines of the terminal instead. **+ screen** also attaches
+   the visible screen once, with the next message.
+3. **Explain this error**: when a command in the active session exits non-zero, a card
+   appears in the panel. Clicking it sends the command, exit status and output to Claude.
+4. **Insert**: each single-line command that Claude suggests in a `bash` block gets an
+   Insert button. It types the command at the prompt of the active session and **never
+   presses Enter**. Text containing newlines or control characters is refused, both in the
+   UI and on the server, so multi-line suggestions only offer Copy.
+
+Claude's own tool use (reading files, running commands in its own process) runs in
+Claude Code's **Manual** permission mode. Each tool call shows Allow/Reject buttons in the panel.
+
+## Requirements
+
+- A recent iTerm2 (only tested on 3.7.7; prompt IDs and command-end notifications need a modern build)
+- **Python API enabled:** iTerm2 > Settings > General > Magic > *Enable Python API*
+- **Shell integration** installed (iTerm2 > Install Shell Integration). It is needed for
+  failed-command detection and per-command output.
+- **iTerm2 Python runtime:** Scripts > Manage > *Install Python Runtime*
+- Node.js ≥ 22 (nvm, Homebrew or /usr/local are all found automatically)
+- Claude Code installed and logged in (`claude` once, then `/login`)
+
+## Install
+
+```bash
+./install.sh
+```
+
+This runs `npm ci` for the adapter and writes a small launcher to
+`~/Library/Application Support/iTerm2/Scripts/AutoLaunch/intelligent_iterm_panel.py`.
+The launcher points back at this folder, so keep the folder where it is.
+
+Then in iTerm2:
+
+1. **Scripts > AutoLaunch > intelligent_iterm_panel.py** to start it now (it also starts
+   automatically whenever iTerm2 launches).
+2. **View > Toolbelt > Claude** to add the panel to the toolbelt.
+3. **View > Toolbelt > Show Toolbelt** (⇧⌘B) to show it.
+
+To remove it: `./install.sh uninstall`.
+
+Logs go to `~/Library/Logs/intelligent-iterm.log`. iTerm2's Scripts > Manage > Console
+also shows the script's output.
+
+### Configuration (environment variables, all optional)
+
+| Variable | Purpose |
+|---|---|
+| `INTELLIGENT_ITERM_NODE` | Path to `node` if auto-detection fails |
+| `INTELLIGENT_ITERM_CLAUDE` | Path to the `claude` CLI to use |
+| `INTELLIGENT_ITERM_PORT` | Fixed port for the local server (default: random) |
+| `INTELLIGENT_ITERM_KEEP_API_KEY=1` | Keep `ANTHROPIC_API_KEY` in the agent's environment. By default it is removed so the panel uses your Claude Code login rather than billing an API key. |
+
+## Development
+
+```bash
+python3 -m unittest discover -s tests        # bridge tests with a fake agent (no tokens)
+```
+
+```bash
+python3 tests/dev_server.py                  # UI in a normal browser at http://127.0.0.1:8765/?t=dev
+```
+
+```bash
+python3 tests/dev_server.py --real           # same, with real Claude Code
+```
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+```
+
+```bash
+.venv/bin/python tests/live_iterm_check.py   # live check: opens an iTerm2 window, runs a failing ls, closes it
+```
+
+```bash
+.venv/bin/python -m intelligent_iterm.main   # run the panel from a shell instead of AutoLaunch
+```
+
+| File | What it does |
+|---|---|
+| `intelligent_iterm/main.py` | Entry point: starts the server, registers the toolbelt tool, watches sessions |
+| `intelligent_iterm/terminal.py` | iTerm2 API: context, failed-command detection, safe insert |
+| `intelligent_iterm/panel.py` | Turns UI actions into ACP prompts and agent updates into UI events |
+| `intelligent_iterm/acp.py` | Minimal ACP (JSON-RPC over stdio) client |
+| `intelligent_iterm/web.py` | Local HTTP + Server-Sent Events server |
+| `intelligent_iterm/config.py` | Finds node, claude and the adapter outside your shell's PATH |
+| `intelligent_iterm/static/index.html` | The chat UI (no build step) |
+
+## Security notes
+
+- The server listens on 127.0.0.1 only. Every API call and the event stream require a
+  random token generated at each launch, and requests with a foreign `Host` header are
+  rejected. Without this, any web page in your browser could make the panel type into
+  your terminal.
+- Insert never sends Enter, newlines, or control characters.
+
+## Known limitations
+
+- **One conversation, one agent process.** It starts in the active session's directory
+  when you send the first message. "New chat" starts a fresh one, for example after you
+  `cd` elsewhere.
+- **"Active session"** means the current session of the frontmost iTerm2 window when you
+  click. Insert goes there, not necessarily to the session the failure came from.
+- **Failure cards** appear only for commands that end while their session is active, and
+  only with shell integration (OSC 133 marks). Commands that ran before the script started
+  are still used for context, via prompt history.
+- **Output capture** is limited to the last 200 lines of a command, and to whatever is
+  still in scrollback. Full-screen apps (vim, less, top) don't produce usable output.
+- **Conversation history** lives in memory. Reloading the panel replays it, but
+  restarting the script or iTerm2 clears it. Sessions are not resumed (`session/load`).
+- **Markdown rendering** is minimal: paragraphs, code blocks, `inline code` and **bold**.
+- **Permission prompts** only offer the options the adapter sends. There is no per-tool
+  settings UI. The session runs in Manual mode regardless of your Claude Code default.
+- **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,
+  MCP servers), so the first turn has a sizeable cached prompt.
+- **Multiple iTerm2 windows** share one panel conversation.
