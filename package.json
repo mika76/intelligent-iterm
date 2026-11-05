@@ -1,0 +1,8 @@
+{
+  "name": "intelligent-iterm",
+  "private": true,
+  "description": "Pins the Claude Code ACP adapter used by the iTerm2 side panel",
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.101.0"
+  }
+}
