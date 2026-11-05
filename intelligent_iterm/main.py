@@ -41,6 +41,8 @@ async def main(connection: iterm2.Connection) -> None:
         connection, "Claude", TOOL_ID, False, web.url)
     log.info("registered toolbelt tool %s", TOOL_ID)
 
+    asyncio.ensure_future(terminal.watch_theme(
+        lambda theme: hub.set_sticky("theme", {"type": "theme", **theme})))
     try:
         await terminal.watch()
         await asyncio.Event().wait()  # keep running; iTerm2 stops us on quit

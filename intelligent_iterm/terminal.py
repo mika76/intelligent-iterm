@@ -31,9 +31,41 @@ class ItermTerminal:
     # ---- active session --------------------------------------------------
 
     def active_session(self) -> Optional[iterm2.Session]:
-        window = self.app.current_terminal_window
+        # current_terminal_window is None while iTerm2 isn't the frontmost app.
+        window = self.app.current_terminal_window or next(iter(self.app.terminal_windows), None)
         tab = window.current_tab if window else None
         return tab.current_session if tab else None
+
+    # ---- theme: make the panel look like the terminal next to it -------------
+
+    async def get_theme(self) -> Optional[Dict[str, Any]]:
+        session = self.active_session()
+        if session is None:
+            return None
+        p = await session.async_get_profile()
+        font, _, size = (p.normal_font or "").rpartition(" ")
+        return {
+            "bg": _css(p.background_color), "fg": _css(p.foreground_color),
+            "dim": _css(p.ansi_8_color), "red": _css(p.ansi_9_color),
+            "green": _css(p.ansi_2_color), "yellow": _css(p.ansi_3_color),
+            "accent": _css(p.link_color) or _css(p.ansi_12_color),
+            "selection": _css(p.selection_color), "cursor": _css(p.cursor_color),
+            "font": font or None, "size": float(size) if size.replace(".", "").isdigit() else None,
+        }
+
+    async def watch_theme(self, on_theme: Callable[[Dict[str, Any]], None]) -> None:
+        """Re-send the theme whenever the active session (and so maybe profile) changes."""
+        last = None
+        async with iterm2.FocusMonitor(self.connection) as mon:
+            while True:
+                try:
+                    theme = await self.get_theme()
+                    if theme and theme != last:
+                        last = theme
+                        on_theme(theme)
+                except Exception:  # noqa: BLE001 - session went away mid-read
+                    log.info("theme read failed", exc_info=True)
+                await mon.async_get_next_update()
 
     # ---- watching for finished commands -------------------------------------
 
@@ -151,6 +183,12 @@ class ItermTerminal:
         if session is None:
             raise RuntimeError("no active terminal session")
         await session.async_send_text(command, suppress_broadcast=True)
+
+
+def _css(color: Any) -> Optional[str]:
+    if color is None:
+        return None
+    return "#%02x%02x%02x" % tuple(max(0, min(255, round(c))) for c in (color.red, color.green, color.blue))
 
 
 def _join_lines(lines: List[Any]) -> str:

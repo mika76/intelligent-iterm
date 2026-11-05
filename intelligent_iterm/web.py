@@ -28,6 +28,13 @@ class EventHub:
     def __init__(self) -> None:
         self._clients: List[asyncio.Queue] = []
         self._history: List[Dict[str, Any]] = []
+        self._sticky: Dict[str, Dict[str, Any]] = {}  # latest event per key, e.g. theme
+
+    def set_sticky(self, key: str, event: Dict[str, Any]) -> None:
+        """Latest-value state (not chat history): replayed first, survives New chat."""
+        self._sticky[key] = event
+        for q in self._clients:
+            q.put_nowait(event)
 
     def publish(self, event: Dict[str, Any]) -> None:
         last = self._history[-1] if self._history else None
@@ -46,7 +53,7 @@ class EventHub:
     def subscribe(self) -> Tuple[asyncio.Queue, List[Dict[str, Any]]]:
         q: asyncio.Queue = asyncio.Queue()
         self._clients.append(q)
-        return q, list(self._history)
+        return q, list(self._sticky.values()) + list(self._history)
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         if q in self._clients:
