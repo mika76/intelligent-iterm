@@ -77,6 +77,9 @@ Then in iTerm2:
 2. **View > Toolbelt > Claude** to add the panel to the toolbelt.
 3. **View > Toolbelt > Show Toolbelt** (⇧⌘B) to show it.
 
+Starting the script again (for example after an update) is safe: running it from the
+Scripts menu starts a new copy, and any older copy exits within a couple of seconds.
+
 To remove it: `./install.sh uninstall`.
 
 Logs go to `~/Library/Logs/intelligent-iterm.log`. iTerm2's Scripts > Manage > Console
