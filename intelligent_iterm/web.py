@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import html
 import json
 import logging
 from pathlib import Path
@@ -29,6 +30,9 @@ class EventHub:
         self._clients: List[asyncio.Queue] = []
         self._history: List[Dict[str, Any]] = []
         self._sticky: Dict[str, Dict[str, Any]] = {}  # latest event per key, e.g. theme
+
+    def get_sticky(self, key: str) -> Optional[Dict[str, Any]]:
+        return self._sticky.get(key)
 
     def set_sticky(self, key: str, event: Dict[str, Any]) -> None:
         """Latest-value state (not chat history): replayed first, survives New chat."""
@@ -97,7 +101,7 @@ class WebServer:
                 return await self._send(writer, 403, b"bad host", "text/plain")
 
             if method == "GET" and url.path == "/":
-                body = (STATIC / "index.html").read_bytes()
+                body = render_page(self.hub.get_sticky("theme"))
                 return await self._send(writer, 200, body, "text/html; charset=utf-8")
 
             supplied = headers.get("x-token") or (query.get("t") or [""])[0]
@@ -155,6 +159,32 @@ class WebServer:
                      f"Content-Length: {len(body)}\r\nCache-Control: no-store\r\n"
                      f"Connection: close\r\n\r\n".encode() + body)
         await writer.drain()
+
+
+def theme_vars(theme: Dict[str, Any]) -> Dict[str, str]:
+    """iTerm2 profile colors/font -> CSS custom properties for the page."""
+    out = {f"--{k}": theme[k] for k in
+           ("bg", "fg", "dim", "accent", "red", "green", "yellow", "cursor") if theme.get(k)}
+    if theme.get("font"):
+        out["--font"] = f"'{theme['font']}', ui-monospace, Menlo, monospace"
+    if theme.get("size"):
+        out["--size"] = f"{max(11, round(theme['size'] * 0.82))}px"
+    bg = theme.get("bg") or ""
+    if len(bg) == 7:
+        r, g, b = (int(bg[i:i + 2], 16) for i in (1, 3, 5))
+        out["color-scheme"] = "dark" if 0.299 * r + 0.587 * g + 0.114 * b < 128 else "light"
+    return out
+
+
+def render_page(theme_event: Optional[Dict[str, Any]]) -> bytes:
+    """The chat page, with the current theme baked into <html> so the very first
+    paint already matches the terminal (no white flash before SSE delivers it)."""
+    page = (STATIC / "index.html").read_text()
+    if theme_event and theme_event.get("vars"):
+        style = ";".join(f"{k}:{v}" for k, v in theme_event["vars"].items())
+        page = page.replace('<html lang="en">',
+                            f'<html lang="en" data-theme="iterm" style="{html.escape(style)}">', 1)
+    return page.encode()
 
 
 def _sse_frame(event: Dict[str, Any]) -> bytes:

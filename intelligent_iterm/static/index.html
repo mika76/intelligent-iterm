@@ -24,6 +24,7 @@
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
+  html { background: var(--bg); }
   body {
     background: var(--bg); color: var(--fg);
     font-family: var(--font); font-size: var(--size); line-height: 1.4;
@@ -179,13 +180,11 @@ async function copy(text) {
 }
 
 // ---- theme from the iTerm2 profile ---------------------------------------
+// The server bakes the current theme into <html style>; this applies later changes.
 function applyTheme(t) {
   const root = document.documentElement;
   root.dataset.theme = "iterm";
-  const set = (k, v) => { if (v) root.style.setProperty(k, v); };
-  ["bg", "fg", "dim", "accent", "red", "green", "yellow", "cursor"].forEach((k) => set("--" + k, t[k]));
-  if (t.font) set("--font", `"${t.font}", ui-monospace, Menlo, monospace`);
-  if (t.size) set("--size", Math.max(11, Math.round(t.size * 0.82)) + "px");
+  Object.entries(t.vars || {}).forEach(([k, v]) => root.style.setProperty(k, v));
 }
 
 // ---- markdown-ish rendering of agent replies -------------------------------

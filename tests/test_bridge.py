@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from intelligent_iterm.panel import Panel  # noqa: E402
-from intelligent_iterm.web import EventHub, WebServer  # noqa: E402
+from intelligent_iterm.web import EventHub, WebServer, theme_vars  # noqa: E402
 
 FAKE_AGENT = [sys.executable, os.path.join(os.path.dirname(__file__), "fake_agent.py")]
 
@@ -106,6 +106,18 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         evs = await self.events_until("turn_end")
         text = "".join(e["text"] for e in evs if e["type"] == "chunk")
         self.assertIn('"optionId": "reject"', text)
+
+    async def test_theme_baked_into_first_paint(self):
+        self.hub.set_sticky("theme", {"type": "theme", "vars": theme_vars(
+            {"bg": "#15191f", "fg": "#dcdcdc", "font": "Fira Code", "size": 17})})
+        status, body = await http(self.port, "GET", "/")
+        self.assertEqual(status, 200)
+        head = body.split(b"<head>")[0].decode()
+        self.assertIn('data-theme="iterm"', head)
+        self.assertIn("--bg:#15191f", head)
+        self.assertIn("color-scheme:dark", head)
+        self.assertIn("--size:14px", head)
+        self.assertIn("&#x27;Fira Code&#x27;", head)  # quoted safely inside the attribute
 
     async def test_insert_goes_to_terminal(self):
         await http(self.port, "POST", "/api/insert", {"text": "ls -la"}, token="secret")

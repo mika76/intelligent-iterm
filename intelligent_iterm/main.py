@@ -17,7 +17,7 @@ from . import config
 from .dock import Dock
 from .panel import Panel
 from .terminal import ItermTerminal
-from .web import EventHub, WebServer
+from .web import EventHub, WebServer, theme_vars
 
 TOOL_ID = "com.intelligent-iterm.panel"
 LOG_FILE = os.path.expanduser("~/Library/Logs/intelligent-iterm.log")
@@ -52,7 +52,7 @@ async def main(connection: iterm2.Connection) -> None:
 
     asyncio.ensure_future(dock.watch_hotkey())
     asyncio.ensure_future(terminal.watch_focus(
-        lambda theme: hub.set_sticky("theme", {"type": "theme", **theme})))
+        lambda theme: hub.set_sticky("theme", {"type": "theme", "vars": theme_vars(theme)})))
     try:
         await terminal.watch()
         await asyncio.Event().wait()  # keep running; iTerm2 stops us on quit
