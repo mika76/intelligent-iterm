@@ -17,7 +17,14 @@ iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTe
 
 ## Features
 
-1. **Chat panel** in the toolbelt with streamed replies.
+1. **Chat panel** with streamed replies, in either of two places:
+   - **Docked below the terminal** (like Intelligent Terminal's agent pane): press
+     **Ctrl+Shift+.** in a terminal to open or close it for that tab, or click `dock ↓` in
+     the toolbelt. It's an iTerm2 browser split pane, created with per-session settings,
+     so no profile is added to your iTerm2 config.
+   - **In the toolbelt** on the right (View > Toolbelt > Claude).
+
+   Both show the same conversation.
 2. **Attach context** (on by default) sends the active session's directory, last command,
    exit status and output with each message. If shell integration has no command
    history, it sends the last 60 lines of the terminal instead. **+ screen** also attaches
@@ -100,12 +107,17 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```
 
 ```bash
+.venv/bin/python tests/live_dock_check.py    # live check: docks the panel in its own window, then closes it
+```
+
+```bash
 .venv/bin/python -m intelligent_iterm.main   # run the panel from a shell instead of AutoLaunch
 ```
 
 | File | What it does |
 |---|---|
 | `intelligent_iterm/main.py` | Entry point: starts the server, registers the toolbelt tool, watches sessions |
+| `intelligent_iterm/dock.py` | Bottom-docked browser split and the Ctrl+Shift+. shortcut |
 | `intelligent_iterm/terminal.py` | iTerm2 API: context, failed-command detection, safe insert |
 | `intelligent_iterm/panel.py` | Turns UI actions into ACP prompts and agent updates into UI events |
 | `intelligent_iterm/acp.py` | Minimal ACP (JSON-RPC over stdio) client |
@@ -123,16 +135,20 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 ## Known limitations
 
-- **Right side only.** iTerm2's toolbelt always docks on the right, and its width is shared
-  with the other toolbelt tools. Unlike Intelligent Terminal's agent pane, it can't dock at
-  the bottom or left. A split pane using an iTerm2 browser profile might allow that, but
-  the Python API can't create one directly, so it isn't implemented.
+- **Docking:** the toolbelt only goes on the right. The bottom dock splits the *active pane*,
+  not the whole tab, because the API can't split a tab's root. With several panes in a tab
+  it sits under the one you were in. Its size is set once, to about 35% of that pane; drag
+  the divider to change it. The dock depends on iTerm2's browser profiles (3.6+, the
+  `browserProfiles` advanced setting, on by default).
+- **Ctrl+Shift+.** is captured from every terminal session while the script runs, so
+  programs in the terminal no longer receive it.
 
 - **One conversation, one agent process.** It starts in the active session's directory
   when you send the first message. "New chat" starts a fresh one, for example after you
   `cd` elsewhere.
-- **"Active session"** means the current session of the frontmost iTerm2 window when you
-  click. Insert goes there, not necessarily to the session the failure came from.
+- **"Active session"** means the focused terminal in the frontmost iTerm2 window. When you
+  are typing in the docked panel, it means the terminal you last used in that tab. Insert
+  goes there and focuses it, which is not necessarily the session the failure came from.
 - **Failure cards** appear only for commands that end while their session is active, and
   only with shell integration (OSC 133 marks). Commands that ran before the script started
   are still used for context, via prompt history.
