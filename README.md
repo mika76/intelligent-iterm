@@ -21,7 +21,12 @@ iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTe
    - **Docked below the terminal** (like Intelligent Terminal's agent pane): press
      **Ctrl+Shift+.** in a terminal to open or close it for that tab, or click `dock ↓` in
      the toolbelt. It's an iTerm2 browser split pane, created with per-session settings,
-     so no profile is added to your iTerm2 config.
+     so no profile is added to your iTerm2 config. The script hides the pane's browser
+     URL bar by pressing **Web > Show Toolbar** through macOS accessibility. iTerm2 has no
+     setting or API for this. The first time, macOS may ask to let iTerm2 control
+     System Events and use Accessibility. If you decline, the URL bar stays; you can hide it
+     yourself with Web > Show Toolbar, or set `INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR=1`
+     to skip the step.
    - **In the toolbelt** on the right (View > Toolbelt > Claude).
 
    Both show the same conversation.
@@ -81,6 +86,7 @@ also shows the script's output.
 |---|---|
 | `INTELLIGENT_ITERM_NODE` | Path to `node` if auto-detection fails |
 | `INTELLIGENT_ITERM_CLAUDE` | Path to the `claude` CLI to use |
+| `INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR=1` | Leave the URL bar visible in the docked pane (skips the accessibility click) |
 | `INTELLIGENT_ITERM_PORT` | Fixed port for the local server (default: random) |
 | `INTELLIGENT_ITERM_KEEP_API_KEY=1` | Keep `ANTHROPIC_API_KEY` in the agent's environment. By default it is removed so the panel uses your Claude Code login rather than billing an API key. |
 
