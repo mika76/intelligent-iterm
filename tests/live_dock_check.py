@@ -35,7 +35,8 @@ async def main(connection):
         await dock.register_status_bar_button()
         button_ok = True
     except Exception as e:  # noqa: BLE001
-        button_ok = repr(e)
+        # The AutoLaunch script may already own the component; that's fine.
+        button_ok = True if "DUPLICATE" in repr(e) else repr(e)
 
     window = await iterm2.Window.async_create(connection)
     shell = window.current_tab.current_session
