@@ -218,9 +218,14 @@ function handle(ev) {
       renderMarkdown(agentText, agentEl);
       if (log.scrollHeight - log.scrollTop - log.clientHeight < 120) log.scrollTop = log.scrollHeight;
       break;
-    case "tool":
-      if (ev.title && ev.status !== "completed") note("⚙︎ " + ev.title);
-      agentEl = null; break;
+    case "tool": { // one line per tool call, updated in place
+      let line = document.getElementById("tool-" + ev.id);
+      if (!line) { line = add(el("div", "note")); line.id = "tool-" + ev.id; agentEl = null; }
+      if (ev.title) line.dataset.title = ev.title;
+      const mark = { completed: "✓", failed: "✗" }[ev.status] || "⚙︎";
+      line.textContent = mark + " " + (line.dataset.title || "Tool");
+      break;
+    }
     case "permission": {
       const card = add(el("div", "card"));
       card.id = "perm-" + ev.id;
