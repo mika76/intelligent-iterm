@@ -30,7 +30,12 @@ class EventHub:
         self._history: List[Dict[str, Any]] = []
 
     def publish(self, event: Dict[str, Any]) -> None:
-        self._history.append(event)
+        last = self._history[-1] if self._history else None
+        if event["type"] == "chunk" and last and last["type"] == "chunk":
+            # Store streamed text as one event so replay stays short.
+            self._history[-1] = {"type": "chunk", "text": last["text"] + event["text"]}
+        else:
+            self._history.append(event)
         del self._history[:-HISTORY_LIMIT]
         for q in self._clients:
             q.put_nowait(event)
