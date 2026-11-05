@@ -50,7 +50,9 @@ async def main(connection: iterm2.Connection) -> None:
         return await dock.toggle()
     routes["/api/dock"] = toggle_dock
 
+    await dock.register_status_bar_button()
     asyncio.ensure_future(dock.watch_hotkey())
+    asyncio.ensure_future(dock.watch_closed_panels())
     asyncio.ensure_future(terminal.watch_focus(
         lambda theme: hub.set_sticky("theme", {"type": "theme", "vars": theme_vars(theme)})))
     try:

@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 
 DOCK_FRACTION = 0.35   # of the split pane's height
 MIN_ROWS = 10
+STATE_VAR = "user.claude_panel"  # per terminal session: "open" / "closed"
 
 # iTerm2 shows a URL/navigation bar on browser panes. There's no profile key or
 # API for it, only the Web > Show Toolbar menu item (which acts on the focused
@@ -51,8 +52,9 @@ class Dock:
     def is_panel(self, session_id: str) -> bool:
         return session_id in self._panels.values()
 
-    async def toggle(self) -> Dict[str, str]:
-        session = self.terminal.active_session()
+    async def toggle(self, session: Optional[iterm2.Session] = None) -> Dict[str, str]:
+        """Open or close the dock in `session`'s tab (default: the active terminal)."""
+        session = session or self.terminal.active_session()
         if session is None or session.tab is None:
             raise RuntimeError("no active terminal session")
         tab = session.tab
@@ -61,6 +63,7 @@ class Dock:
         if panel is not None:
             await panel.async_close(force=True)
             del self._panels[tab.tab_id]
+            await _set_state(session, "closed")
             await session.async_activate()
             return {"state": "closed"}
         self._panels.pop(tab.tab_id, None)  # stale: closed by the user
@@ -74,6 +77,7 @@ class Dock:
         self._panels[tab.tab_id] = panel.session_id
         # The new pane's focus event can arrive before we knew it was a panel.
         self.terminal.remember_terminal(tab.tab_id, session.session_id)
+        await _set_state(session, "open")
 
         if grid is not None and grid.height > 2 * MIN_ROWS:
             rows = max(MIN_ROWS, int(grid.height * DOCK_FRACTION))
@@ -87,6 +91,39 @@ class Dock:
             await asyncio.sleep(0.4)  # let the new pane take focus
             await hide_browser_toolbar()
         return {"state": "open"}
+
+    async def register_status_bar_button(self) -> None:
+        """A status bar component ("Claude ▴/▾") that toggles the dock when clicked.
+        Add it once via Settings > Profiles > Session > Configure Status Bar."""
+        component = iterm2.StatusBarComponent(
+            short_description="Claude panel",
+            detailed_description="Show or hide the Claude panel below this session (⌃⇧.)",
+            knobs=[], exemplar="✳ Claude ▴", update_cadence=None,
+            identifier="com.intelligent-iterm.toggle")
+
+        @iterm2.StatusBarRPC
+        async def claude_panel_button(knobs, state=iterm2.Reference(STATE_VAR + "?")):
+            return "✳ Claude ▾" if state == "open" else "✳ Claude ▴"
+
+        async def onclick(session_id: str) -> None:
+            session = self.app.get_session_by_id(session_id)
+            if session is not None and not self.is_panel(session_id):
+                await self.toggle(session)
+
+        await component.async_register(self.connection, claude_panel_button, onclick=onclick)
+
+    async def watch_closed_panels(self) -> None:
+        """Forget panels the user closed themselves (pane ✕), and fix the button label."""
+        async with iterm2.SessionTerminationMonitor(self.connection) as mon:
+            while True:
+                gone = await mon.async_get()
+                log.debug("session ended: %s", gone)
+                for tab_id, panel_id in list(self._panels.items()):
+                    if panel_id == gone:
+                        del self._panels[tab_id]
+                        tab = self.app.get_tab_by_id(tab_id)
+                        for s in (tab.sessions if tab else []):
+                            await _set_state(s, "closed")
 
     async def watch_hotkey(self) -> None:
         """Ctrl+Shift+. in any terminal session toggles the dock for that tab."""
@@ -121,3 +158,10 @@ async def hide_browser_toolbar() -> str:
         result = f"failed: {e}"
     log.info("hide browser toolbar: %s", result)
     return result
+
+
+async def _set_state(session: iterm2.Session, state: str) -> None:
+    try:
+        await session.async_set_variable(STATE_VAR, state)
+    except Exception:  # noqa: BLE001 - only affects the status bar label
+        log.info("could not set %s", STATE_VAR, exc_info=True)
