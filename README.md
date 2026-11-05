@@ -18,9 +18,11 @@ iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTe
 ## Features
 
 1. **Chat panel** with streamed replies, in either of two places:
-   - **Docked below the terminal** (like Intelligent Terminal's agent pane): press
-     **Ctrl+Shift+.** in a terminal to open or close it for that tab, or click `dock ↓` in
-     the toolbelt. It's an iTerm2 browser split pane, created with per-session settings,
+   - **Docked below the terminal** (like Intelligent Terminal's agent pane). Open or close
+     it for the current tab with **Ctrl+Shift+.**, the **✳ Claude ▴/▾** status bar button,
+     `hide` in the panel, or `dock ↓` in the toolbelt. To add the button, go to iTerm2 >
+     Settings > Profiles > Session > *Configure Status Bar* and drag in **Claude panel**.
+     It only appears in the picker while the script is running. It's an iTerm2 browser split pane, created with per-session settings,
      so no profile is added to your iTerm2 config. The script hides the pane's browser
      URL bar by pressing **Web > Show Toolbar** through macOS accessibility. iTerm2 has no
      setting or API for this. The first time, macOS may ask to let iTerm2 control
