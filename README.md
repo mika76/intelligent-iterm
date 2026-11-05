@@ -22,12 +22,16 @@ iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTe
    exit status and output with each message. If shell integration has no command
    history, it sends the last 60 lines of the terminal instead. **+ screen** also attaches
    the visible screen once, with the next message.
-3. **Explain this error**: when a command in the active session exits non-zero, a card
-   appears in the panel. Clicking it sends the command, exit status and output to Claude.
+3. **Explain this error**: when a command in the active session exits non-zero, a status
+   bar above the input shows it with an **Explain** button, which sends the command, exit
+   status and output to Claude.
 4. **Insert**: each single-line command that Claude suggests in a `bash` block gets an
    Insert button. It types the command at the prompt of the active session and **never
    presses Enter**. Text containing newlines or control characters is refused, both in the
    UI and on the server, so multi-line suggestions only offer Copy.
+
+The panel takes its colors and font from the active session's iTerm2 profile, and updates
+when you switch to a session with a different profile, so it looks like part of the terminal.
 
 Claude's own tool use (reading files, running commands in its own process) runs in
 Claude Code's **Manual** permission mode. Each tool call shows Allow/Reject buttons in the panel.
@@ -118,6 +122,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - Insert never sends Enter, newlines, or control characters.
 
 ## Known limitations
+
+- **Right side only.** iTerm2's toolbelt always docks on the right, and its width is shared
+  with the other toolbelt tools. Unlike Intelligent Terminal's agent pane, it can't dock at
+  the bottom or left. A split pane using an iTerm2 browser profile might allow that, but
+  the Python API can't create one directly, so it isn't implemented.
 
 - **One conversation, one agent process.** It starts in the active session's directory
   when you send the first message. "New chat" starts a fresh one, for example after you
