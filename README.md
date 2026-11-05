@@ -148,8 +148,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 - **Docking:** the toolbelt only goes on the right. The bottom dock splits the *active pane*,
   not the whole tab, because the API can't split a tab's root. With several panes in a tab
-  it sits under the one you were in. Its size is set once, to about 35% of that pane; drag
-  the divider to change it. The dock depends on iTerm2's browser profiles (tested on 3.7.7; the
+  it sits under the one you were in. It opens at iTerm2's default split (about half),
+  and the window keeps its size; drag the divider to change it. Setting a size from the
+  script isn't reliable: terminal panes are sized in rows and browser panes in points, and
+  iTerm2 resizes the window to reconcile them. The dock depends on iTerm2's browser profiles (tested on 3.7.7; the
   `browserProfiles` advanced setting, on by default).
 - **The docked panel grays out when it isn't focused.** iTerm2 dims inactive browser panes
   with a gray overlay and ignores "Dimming affects only text" for them. Only the global
