@@ -14,6 +14,7 @@ import secrets
 import iterm2
 
 from . import config
+from .dock import Dock
 from .panel import Panel
 from .terminal import ItermTerminal
 from .web import EventHub, WebServer
@@ -33,15 +34,24 @@ async def main(connection: iterm2.Connection) -> None:
     panel = Panel(hub, terminal, command, env)
     panel_ref.append(panel)
 
-    web = WebServer(secrets.token_urlsafe(24), hub, panel.routes())
+    routes = panel.routes()
+    web = WebServer(secrets.token_urlsafe(24), hub, routes)
     port = await web.start(int(os.environ.get("INTELLIGENT_ITERM_PORT", "0")))
     log.info("panel server on 127.0.0.1:%s", port)
 
+    # Two ways to show the same panel: the toolbelt (right side) and a
+    # bottom-docked browser split toggled with Ctrl+Shift+.
     await iterm2.async_register_web_view_tool(
         connection, "Claude", TOOL_ID, False, web.url)
     log.info("registered toolbelt tool %s", TOOL_ID)
+    dock = Dock(connection, app, terminal, web.url)
 
-    asyncio.ensure_future(terminal.watch_theme(
+    async def toggle_dock(_body: dict) -> dict:
+        return await dock.toggle()
+    routes["/api/dock"] = toggle_dock
+
+    asyncio.ensure_future(dock.watch_hotkey())
+    asyncio.ensure_future(terminal.watch_focus(
         lambda theme: hub.set_sticky("theme", {"type": "theme", **theme})))
     try:
         await terminal.watch()
