@@ -52,6 +52,7 @@ async def main(connection):
         await shell.async_activate()
         await asyncio.sleep(1.5)
         before = shell.grid_size
+        frame0 = await window.async_get_frame()
         check("dock opens", (await dock.toggle())["state"] == "open")
         check("button state open", await shell.async_get_variable("user.claude_panel") == "open")
         tab = window.current_tab
@@ -101,6 +102,18 @@ async def main(connection):
         await asyncio.sleep(0.5)
         check("panel session gone", app.get_session_by_id(panel_id) is None and len(tab.sessions) == 1)
         check("button state closed", await shell.async_get_variable("user.claude_panel") == "closed")
+
+        def same(a, b):
+            return (round(a.size.width), round(a.size.height)) == (round(b.size.width), round(b.size.height))
+        frame1 = await window.async_get_frame()
+        check("window size unchanged after open/close", same(frame0, frame1),
+              (frame0.size.height, frame1.size.height))
+        await dock.toggle(shell)
+        await asyncio.sleep(1.0)
+        frame2 = await window.async_get_frame()
+        check("window size unchanged on reopen", same(frame0, frame2), (frame0.size.height, frame2.size.height))
+        await dock.toggle(shell)
+        await asyncio.sleep(1.0)
 
         # Status bar click path, then the user closing the pane with its own close button.
         await dock.toggle(shell)
