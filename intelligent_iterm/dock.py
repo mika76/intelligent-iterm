@@ -7,7 +7,9 @@ to the user's iTerm2 settings.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from typing import Dict, Optional
 
 import iterm2
@@ -18,6 +20,22 @@ log = logging.getLogger(__name__)
 
 DOCK_FRACTION = 0.35   # of the split pane's height
 MIN_ROWS = 10
+
+# iTerm2 shows a URL/navigation bar on browser panes. There's no profile key or
+# API for it, only the Web > Show Toolbar menu item (which acts on the focused
+# browser pane), so we press it via System Events. Needs Accessibility
+# permission for iTerm2; if that's missing the bar simply stays.
+HIDE_TOOLBAR_SCRIPT = """
+tell application "System Events"
+  tell process "iTerm2"
+    if frontmost is false then return "background"
+    set mi to menu item "Show Toolbar" of menu "Web" of menu bar 1
+    if enabled of mi is false then return "disabled"
+    click mi
+    return "hidden"
+  end tell
+end tell
+"""
 
 
 class Dock:
@@ -51,6 +69,7 @@ class Dock:
         profile = iterm2.LocalWriteOnlyProfile()
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
         profile._simple_set("Initial URL", self.url)      # pylint: disable=protected-access
+        profile.set_status_bar_enabled(False)  # the profile's status bar is noise in the panel
         panel = await session.async_split_pane(vertical=False, profile_customizations=profile)
         self._panels[tab.tab_id] = panel.session_id
         # The new pane's focus event can arrive before we knew it was a panel.
@@ -64,6 +83,9 @@ class Dock:
                 await tab.async_update_layout()
             except Exception:  # noqa: BLE001 - cosmetic; the split still works
                 log.info("could not resize dock", exc_info=True)
+        if os.environ.get("INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR") != "1":
+            await asyncio.sleep(0.4)  # let the new pane take focus
+            await hide_browser_toolbar()
         return {"state": "open"}
 
     async def watch_hotkey(self) -> None:
@@ -85,3 +107,17 @@ class Dock:
                         await self.toggle()
                     except Exception:  # noqa: BLE001
                         log.exception("dock toggle failed")
+
+
+async def hide_browser_toolbar() -> str:
+    """Press Web > Show Toolbar for the focused browser pane. Returns what happened."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/usr/bin/osascript", "-e", HIDE_TOOLBAR_SCRIPT,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), 5)
+        result = out.decode().strip() or err.decode().strip()
+    except Exception as e:  # noqa: BLE001 - cosmetic
+        result = f"failed: {e}"
+    log.info("hide browser toolbar: %s", result)
+    return result
