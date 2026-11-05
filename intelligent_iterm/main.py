@@ -21,10 +21,46 @@ from .web import EventHub, WebServer, theme_vars
 
 TOOL_ID = "com.intelligent-iterm.panel"
 LOG_FILE = os.path.expanduser("~/Library/Logs/intelligent-iterm.log")
+# Restarting the script from the Scripts menu starts a new copy without stopping
+# the old one; two copies would both react to the hotkey and button. The newest
+# copy owns this file, and older copies exit when they see they've been replaced.
+PID_FILE = os.path.expanduser("~/Library/Caches/intelligent-iterm.pid")
 log = logging.getLogger("intelligent_iterm")
 
 
+def _owner_pid() -> int:
+    try:
+        with open(PID_FILE) as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+async def _exit_when_replaced(panel: Panel) -> None:
+    while True:
+        await asyncio.sleep(1.5)
+        if _owner_pid() not in (0, os.getpid()):
+            log.info("a newer copy (pid %s) took over; exiting", _owner_pid())
+            await panel.shutdown()
+            os._exit(0)  # drops the iTerm2 connection, releasing hotkey/button/tool
+
+
+async def _retry_while_duplicate(register, what: str) -> None:
+    """An older copy may still hold a registration for a moment while it exits."""
+    for attempt in range(10):
+        try:
+            return await register()
+        except Exception as e:  # noqa: BLE001
+            if "DUPLICATE" not in repr(e) or attempt == 9:
+                log.error("could not register %s: %r", what, e)
+                return
+            await asyncio.sleep(1)
+
+
 async def main(connection: iterm2.Connection) -> None:
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
     app = await iterm2.async_get_app(connection)
     hub = EventHub()
     panel_ref: list = []
@@ -50,7 +86,8 @@ async def main(connection: iterm2.Connection) -> None:
         return await dock.toggle()
     routes["/api/dock"] = toggle_dock
 
-    await dock.register_status_bar_button()
+    asyncio.ensure_future(_exit_when_replaced(panel))
+    await _retry_while_duplicate(dock.register_status_bar_button, "status bar button")
     asyncio.ensure_future(dock.watch_hotkey())
     asyncio.ensure_future(dock.watch_closed_panels())
     asyncio.ensure_future(terminal.watch_focus(
