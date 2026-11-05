@@ -98,6 +98,31 @@ class Dock:
             await hide_browser_toolbar()
         return {"state": "open"}
 
+    async def replace_restored_panels(self, windows=None) -> int:
+        """iTerm2 restores browser panes on relaunch with their old URL, which points
+        at a previous run's server (and shows the URL bar). Swap each for a fresh one."""
+        stale = []
+        for window in (windows if windows is not None else self.app.terminal_windows):
+            for tab in window.tabs:
+                for s in tab.sessions:
+                    try:
+                        props = (await s.async_get_profile()).all_properties
+                    except Exception:  # noqa: BLE001
+                        continue
+                    url = props.get("Initial URL") or ""
+                    if (props.get("Custom Command") == "Browser" and "dock=1" in url
+                            and url.startswith("http://127.0.0.1:") and url != self.url):
+                        stale.append((tab, s))
+        for tab, panel in stale:
+            terminal = next((x for x in tab.sessions if x.session_id != panel.session_id), None)
+            await panel.async_close(force=True)
+            if terminal is not None:
+                await asyncio.sleep(0.3)
+                await self.toggle(terminal)
+        if stale:
+            log.info("replaced %d restored panel pane(s)", len(stale))
+        return len(stale)
+
     async def register_status_bar_button(self) -> None:
         """A status bar component ("Claude ▴/▾") that toggles the dock when clicked.
         Add it once via Settings > Profiles > Session > Configure Status Bar."""
