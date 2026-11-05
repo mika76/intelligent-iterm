@@ -36,11 +36,24 @@ def _owner_pid() -> int:
         return 0
 
 
-async def _exit_when_replaced(panel: Panel) -> None:
+async def _exit_when_orphaned(app: iterm2.App, panel: Panel) -> None:
+    """Exit when a newer copy takes over, or when iTerm2 goes away (quit/crash):
+    the iterm2 library doesn't end the script on a lost connection by itself,
+    so without this the web server and agent would linger after iTerm2 quits."""
+    ticks = 0
     while True:
         await asyncio.sleep(1.5)
+        ticks += 1
+        reason = None
         if _owner_pid() not in (0, os.getpid()):
-            log.info("a newer copy (pid %s) took over; exiting", _owner_pid())
+            reason = f"a newer copy (pid {_owner_pid()}) took over"
+        elif ticks % 4 == 0:  # every ~6s: is iTerm2 still answering?
+            try:
+                await asyncio.wait_for(app.async_get_variable("effectiveTheme"), 10)
+            except Exception as e:  # noqa: BLE001
+                reason = f"lost connection to iTerm2 ({e!r})"
+        if reason:
+            log.info("%s; exiting", reason)
             await panel.shutdown()
             os._exit(0)  # drops the iTerm2 connection, releasing hotkey/button/tool
 
@@ -86,9 +99,13 @@ async def main(connection: iterm2.Connection) -> None:
         return await dock.toggle()
     routes["/api/dock"] = toggle_dock
 
-    asyncio.ensure_future(_exit_when_replaced(panel))
+    asyncio.ensure_future(_exit_when_orphaned(app, panel))
     await _retry_while_duplicate(dock.register_status_bar_button, "status bar button")
     asyncio.ensure_future(dock.watch_hotkey())
+    try:
+        await dock.replace_restored_panels()
+    except Exception:  # noqa: BLE001 - never block startup on this
+        log.exception("could not replace restored panels")
     asyncio.ensure_future(dock.watch_closed_panels())
     asyncio.ensure_future(terminal.watch_focus(
         lambda theme: hub.set_sticky("theme", {"type": "theme", "vars": theme_vars(theme)})))
