@@ -30,6 +30,12 @@ async def main(connection):
     await web.start()
     dock = Dock(connection, app, term, web.url)
     focus_task = asyncio.ensure_future(term.watch_focus(lambda t: None))
+    closed_task = asyncio.ensure_future(dock.watch_closed_panels())
+    try:
+        await dock.register_status_bar_button()
+        button_ok = True
+    except Exception as e:  # noqa: BLE001
+        button_ok = repr(e)
 
     window = await iterm2.Window.async_create(connection)
     shell = window.current_tab.current_session
@@ -41,10 +47,12 @@ async def main(connection):
         print(("PASS " if cond else "FAIL ") + name, "" if cond else detail)
 
     try:
+        check("status bar button registers", button_ok is True, button_ok)
         await shell.async_activate()
         await asyncio.sleep(1.5)
         before = shell.grid_size
         check("dock opens", (await dock.toggle())["state"] == "open")
+        check("button state open", await shell.async_get_variable("user.claude_panel") == "open")
         tab = window.current_tab
         panel_id = dock._panels.get(tab.tab_id)
         panel_session = app.get_session_by_id(panel_id)
@@ -91,8 +99,25 @@ async def main(connection):
         check("dock closes", (await dock.toggle())["state"] == "closed")
         await asyncio.sleep(0.5)
         check("panel session gone", app.get_session_by_id(panel_id) is None and len(tab.sessions) == 1)
+        check("button state closed", await shell.async_get_variable("user.claude_panel") == "closed")
+
+        # Status bar click path, then the user closing the pane with its own close button.
+        await dock.toggle(shell)
+        check("button state open again", await shell.async_get_variable("user.claude_panel") == "open")
+        reopened = app.get_session_by_id(dock._panels[tab.tab_id])
+        await reopened.async_close(force=True)
+        for _ in range(20):
+            if tab.tab_id not in dock._panels:
+                break
+            await asyncio.sleep(0.25)
+        if "-v" in sys.argv:
+            print("  panels after close:", dock._panels, "var:", await shell.async_get_variable("user.claude_panel"),
+                  "tab sessions:", [x.session_id for x in (app.get_tab_by_id(tab.tab_id) or tab).sessions])
+        check("closing the pane resets the button",
+              await shell.async_get_variable("user.claude_panel") == "closed" and tab.tab_id not in dock._panels)
     finally:
         focus_task.cancel()
+        closed_task.cancel()
         await shell.async_send_text("\x15")
         await window.async_close(force=True)
         await panel.shutdown()
