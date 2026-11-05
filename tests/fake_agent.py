@@ -37,4 +37,7 @@ for line in sys.stdin:
                           "content": {"type": "text", "text": "permission: " + json.dumps(reply["result"])}})
         update("s1", {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "echo: "}})
         update("s1", {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
+        if "suggest" in text:
+            update("s1", {"sessionUpdate": "agent_message_chunk", "content": {
+                "type": "text", "text": "\n\nTry **this**:\n\n```bash\nls -la\n```\n\nor:\n\n```bash\nfor f in *; do\n  echo $f\ndone\n```\n"}})
         send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})

@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Panel</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d1d1f; --muted: #6e6e73; --border: #d9d9de;
+    --bubble: #f2f2f5; --code-bg: #f6f6f8; --accent: #c15f3c; --accent-fg: #fff;
+    --danger: #c0392b; --danger-bg: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e; --fg: #e6e6e6; --muted: #9a9a9a; --border: #3a3a3a;
+      --bubble: #2a2a2d; --code-bg: #141414; --accent: #d97757; --accent-fg: #fff;
+      --danger: #ff7b6b; --danger-bg: #3a2220;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  header .title { font-weight: 600; }
+  header .status { color: var(--muted); font-size: 11px; flex: 1; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
+  button {
+    font: inherit; font-size: 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bubble); color: var(--fg); padding: 3px 8px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  #log { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; max-width: 90%; background: var(--bubble);
+    padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; }
+  .msg.user .ctx { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .msg.agent p { margin: 0 0 6px; }
+  .msg.agent p:last-child { margin-bottom: 0; }
+  .note { color: var(--muted); font-size: 11px; }
+  .note.error { color: var(--danger); }
+  code { font: 12px ui-monospace, Menlo, monospace; background: var(--code-bg);
+    padding: 1px 4px; border-radius: 4px; }
+  .codeblock { border: 1px solid var(--border); border-radius: 6px; margin: 6px 0; overflow: hidden; }
+  .codeblock pre { margin: 0; padding: 8px; background: var(--code-bg); overflow-x: auto;
+    font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  .codeblock .bar { display: flex; gap: 6px; justify-content: flex-end; padding: 4px 6px;
+    border-top: 1px solid var(--border); }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+  .card.fail { border-color: var(--danger); background: var(--danger-bg); }
+  .card .row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .card code { background: transparent; padding: 0; }
+  footer { border-top: 1px solid var(--border); padding: 8px 10px; }
+  textarea {
+    width: 100%; resize: none; min-height: 52px; max-height: 160px; font: inherit;
+    color: var(--fg); background: var(--bubble); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 8px;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .controls { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; }
+  .controls label { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+  .controls .spacer { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">Claude</span>
+  <span class="status" id="status">Connecting…</span>
+  <button id="newchat" title="Start a fresh conversation">New chat</button>
+</header>
+<main id="log"></main>
+<footer>
+  <textarea id="input" placeholder="Ask about your terminal… (Enter to send, Shift+Enter for newline)"></textarea>
+  <div class="controls">
+    <label title="Send the active session's directory, last command, exit status and output">
+      <input type="checkbox" id="attach"> Attach context</label>
+    <label title="Also send the visible screen with the next message">
+      <input type="checkbox" id="screen"> + screen</label>
+    <span class="spacer"></span>
+    <button id="send" class="primary">Send</button>
+  </div>
+</footer>
+<script>
+"use strict";
+const token = new URLSearchParams(location.search).get("t") || "";
+const $ = (id) => document.getElementById(id);
+const log = $("log"), input = $("input"), sendBtn = $("send");
+let busy = false, agentEl = null, agentText = "";
+
+// ---- small helpers -------------------------------------------------------
+function store(key, value) {
+  try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); }
+  catch (e) { return null; }
+}
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Token": token },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({ ok: false, error: res.statusText }));
+  if (!data.ok) note(data.error || "Request failed", true);
+  return data;
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function add(node) {
+  const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.appendChild(node);
+  if (stick) log.scrollTop = log.scrollHeight;
+  return node;
+}
+function note(text, isError) { add(el("div", "note" + (isError ? " error" : ""), text)); }
+function setBusy(b) {
+  busy = b;
+  sendBtn.textContent = b ? "Stop" : "Send";
+  sendBtn.classList.toggle("primary", !b);
+  document.querySelectorAll("button[data-needs-idle]").forEach((x) => (x.disabled = b));
+}
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch (e) { /* fall back */ }
+  const ta = el("textarea"); ta.value = text; document.body.appendChild(ta);
+  ta.select(); document.execCommand("copy"); ta.remove();
+}
+
+// ---- markdown-ish rendering of agent replies -------------------------------
+const SHELL_LANGS = ["", "bash", "sh", "shell", "zsh", "console", "fish"];
+function renderInline(text, parent) {
+  // `code` and **bold**; everything else as plain text (no HTML injection).
+  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const tok = m[0];
+    parent.appendChild(tok[0] === "`" ? el("code", "", tok.slice(1, -1)) : el("strong", "", tok.slice(2, -2)));
+    last = m.index + tok.length;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+function codeBlock(lang, code, done) {
+  const box = el("div", "codeblock");
+  box.appendChild(el("pre", "", code));
+  if (!done) return box;
+  const bar = el("div", "bar");
+  const cmd = code.replace(/\n+$/, "");
+  const copyBtn = el("button", "", "Copy");
+  copyBtn.onclick = async () => { await copy(cmd); copyBtn.textContent = "Copied"; };
+  bar.appendChild(copyBtn);
+  if (SHELL_LANGS.includes(lang.toLowerCase()) && cmd.trim()) {
+    const ins = el("button", "primary", "Insert");
+    if (cmd.includes("\n")) {
+      ins.disabled = true;
+      ins.title = "Multi-line commands can't be inserted safely; use Copy";
+    } else {
+      ins.title = "Type into the active terminal session (does not press Enter)";
+      ins.onclick = async () => {
+        const r = await api("/api/insert", { text: cmd });
+        if (r.ok) { ins.textContent = "Inserted"; }
+      };
+    }
+    bar.appendChild(ins);
+  }
+  box.appendChild(bar);
+  return box;
+}
+function renderMarkdown(src, container) {
+  container.replaceChildren();
+  const parts = src.split(/^```/m);
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { // inside a fence: first line is the language
+      const nl = part.indexOf("\n");
+      const lang = nl === -1 ? "" : part.slice(0, nl).trim();
+      const code = nl === -1 ? "" : part.slice(nl + 1);
+      const closed = i < parts.length - 1;
+      container.appendChild(codeBlock(lang, code, closed));
+    } else {
+      part.split(/\n{2,}/).forEach((para) => {
+        if (!para.trim()) return;
+        const p = el("p");
+        para.replace(/^\n+|\n+$/g, "").split("\n").forEach((line, j) => {
+          if (j) p.appendChild(el("br"));
+          renderInline(line, p);
+        });
+        container.appendChild(p);
+      });
+    }
+  });
+}
+
+// ---- events from the server -------------------------------------------------
+function handle(ev) {
+  switch (ev.type) {
+    case "reset":
+      log.replaceChildren(); agentEl = null; setBusy(false); break;
+    case "status":
+      $("status").textContent = ev.text; break;
+    case "user": {
+      agentEl = null;
+      const m = add(el("div", "msg user", ev.text));
+      if (ev.context) m.appendChild(el("span", "ctx", ev.context));
+      setBusy(true);
+      break;
+    }
+    case "chunk":
+      if (!agentEl) { agentEl = add(el("div", "msg agent")); agentText = ""; }
+      agentText += ev.text;
+      renderMarkdown(agentText, agentEl);
+      if (log.scrollHeight - log.scrollTop - log.clientHeight < 120) log.scrollTop = log.scrollHeight;
+      break;
+    case "tool":
+      if (ev.title && ev.status !== "completed") note("⚙︎ " + ev.title);
+      agentEl = null; break;
+    case "permission": {
+      const card = add(el("div", "card"));
+      card.id = "perm-" + ev.id;
+      card.appendChild(el("div", "", "Claude wants to: " + ev.title));
+      const row = card.appendChild(el("div", "row"));
+      ev.options.forEach((o) => {
+        const b = el("button", o.kind && o.kind.startsWith("allow") ? "" : "primary", o.name);
+        b.onclick = () => api("/api/permission", { id: ev.id, optionId: o.optionId });
+        row.appendChild(b);
+      });
+      break;
+    }
+    case "permission_done": {
+      const card = $("perm-" + ev.id);
+      if (card) card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      break;
+    }
+    case "failed_command": {
+      const card = add(el("div", "card fail"));
+      const head = card.appendChild(el("div"));
+      head.appendChild(el("code", "", ev.command));
+      head.appendChild(document.createTextNode(" exited with " + ev.exit));
+      const row = card.appendChild(el("div", "row"));
+      const b = el("button", "primary", "Explain this error");
+      b.dataset.needsIdle = "1";
+      b.disabled = busy;
+      b.onclick = () => api("/api/explain", { id: ev.id });
+      row.appendChild(b);
+      break;
+    }
+    case "turn_end":
+      agentEl = null; setBusy(false);
+      if (ev.stopReason === "cancelled") note("Stopped.");
+      break;
+    case "error":
+      note(ev.message, true); break;
+  }
+}
+
+function connect() {
+  const es = new EventSource("/events?t=" + encodeURIComponent(token));
+  es.onopen = () => {
+    // The server replays the whole conversation on every (re)connect.
+    log.replaceChildren(); agentEl = null; setBusy(false);
+    $("status").textContent = "Ready";
+  };
+  es.onmessage = (m) => handle(JSON.parse(m.data));
+  es.onerror = () => { $("status").textContent = "Disconnected — retrying…"; };
+}
+
+// ---- composer ----------------------------------------------------------------
+async function send() {
+  if (busy) { await api("/api/cancel"); return; }
+  const text = input.value.trim();
+  if (!text) return;
+  const r = await api("/api/send", { text, attach: $("attach").checked, screen: $("screen").checked });
+  if (r.ok) { input.value = ""; $("screen").checked = false; }
+}
+sendBtn.onclick = send;
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+});
+$("newchat").onclick = () => api("/api/new");
+$("attach").checked = store("attach") !== "0";
+$("attach").onchange = () => store("attach", $("attach").checked ? "1" : "0");
+connect();
+input.focus();
+</script>
+</body>
+</html>
