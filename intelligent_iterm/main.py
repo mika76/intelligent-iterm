@@ -102,13 +102,19 @@ async def main(connection: iterm2.Connection) -> None:
     asyncio.ensure_future(_exit_when_orphaned(app, panel))
     await _retry_while_duplicate(dock.register_status_bar_button, "status bar button")
     asyncio.ensure_future(dock.watch_hotkey())
+    publish_theme = lambda theme: hub.set_sticky("theme", {"type": "theme", "vars": theme_vars(theme)})  # noqa: E731
+    try:  # have the theme before any panel page loads, so it never paints in default colors
+        theme = await terminal.get_theme()
+        if theme:
+            publish_theme(theme)
+    except Exception:  # noqa: BLE001
+        log.info("initial theme read failed", exc_info=True)
     try:
         await dock.replace_restored_panels()
     except Exception:  # noqa: BLE001 - never block startup on this
         log.exception("could not replace restored panels")
     asyncio.ensure_future(dock.watch_closed_panels())
-    asyncio.ensure_future(terminal.watch_focus(
-        lambda theme: hub.set_sticky("theme", {"type": "theme", "vars": theme_vars(theme)})))
+    asyncio.ensure_future(terminal.watch_focus(publish_theme))
     try:
         await terminal.watch()
         await asyncio.Event().wait()  # keep running; iTerm2 stops us on quit
