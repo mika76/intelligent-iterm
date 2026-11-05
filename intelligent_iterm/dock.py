@@ -72,12 +72,12 @@ class Dock:
         profile = iterm2.LocalWriteOnlyProfile()
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
         profile._simple_set("Initial URL", self.url)      # pylint: disable=protected-access
-        profile.set_status_bar_enabled(False)  # the profile's status bar is noise in the panel
         panel = await session.async_split_pane(vertical=False, profile_customizations=profile)
         self._panels[tab.tab_id] = panel.session_id
         # The new pane's focus event can arrive before we knew it was a panel.
         self.terminal.remember_terminal(tab.tab_id, session.session_id)
         await _set_state(session, "open")
+        await _set_state(panel, "open")  # the panel shows the window's status bar while focused
 
         if grid is not None and grid.height > 2 * MIN_ROWS:
             rows = max(MIN_ROWS, int(grid.height * DOCK_FRACTION))
@@ -107,7 +107,10 @@ class Dock:
 
         async def onclick(session_id: str) -> None:
             session = self.app.get_session_by_id(session_id)
-            if session is not None and not self.is_panel(session_id):
+            if session is not None and self.is_panel(session_id):
+                # Clicked while the panel is focused: close it, back to its terminal.
+                session = next((s for s in session.tab.sessions if not self.is_panel(s.session_id)), None)
+            if session is not None:
                 await self.toggle(session)
 
         await component.async_register(self.connection, claude_panel_button, onclick=onclick)
