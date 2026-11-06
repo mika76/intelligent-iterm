@@ -51,6 +51,8 @@
   header .title { color: var(--fg); }
   header .title::before { content: "✳ "; color: var(--accent); }
   header .status { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  header label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  header input { accent-color: var(--accent); margin: 0; }
 
   /* Transcript */
   #log { flex: 1; overflow-y: auto; padding: 8px 10px 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -86,7 +88,8 @@
 
   /* Prompt-style input */
   footer { border-top: 1px solid var(--border); padding: 6px 10px 6px; }
-  .prompt { display: flex; gap: 1ch; align-items: flex-start; }
+  .prompt { display: flex; gap: 1ch; align-items: flex-end; }
+  .prompt .glyph { align-self: flex-start; }
   .prompt .glyph { color: var(--accent); line-height: 1.4; }
   textarea {
     flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--fg);
@@ -94,17 +97,16 @@
     caret-color: var(--cursor, var(--fg));
   }
   textarea::placeholder { color: var(--dim); }
-  .controls { display: flex; align-items: center; gap: 12px; margin-top: 4px;
-    font-size: var(--small); color: var(--dim); }
-  .controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-  .controls input { accent-color: var(--accent); margin: 0; }
-  .controls .spacer { flex: 1; }
 </style>
 </head>
 <body>
 <header>
   <span class="title">Claude Code</span>
   <span class="status" id="status">connecting…</span>
+  <label title="Send the active session's directory, last command, exit status and output">
+    <input type="checkbox" id="attach"> context</label>
+  <label title="Also send the visible screen with the next message">
+    <input type="checkbox" id="screen"> screen</label>
   <button id="newchat" class="link" title="Start a fresh conversation">new</button>
   <button id="dock" class="link"></button>
 </header>
@@ -119,15 +121,7 @@
   <div class="prompt">
     <span class="glyph">❯</span>
     <textarea id="input" placeholder="Ask about your terminal…"></textarea>
-  </div>
-  <div class="controls">
-    <label title="Send the active session's directory, last command, exit status and output">
-      <input type="checkbox" id="attach"> context</label>
-    <label title="Also send the visible screen with the next message">
-      <input type="checkbox" id="screen"> screen</label>
-    <span class="spacer"></span>
-    <span id="hint">⏎ send</span>
-    <button id="send" class="primary">Send</button>
+    <button id="send" class="primary" title="Send (⏎)">Send</button>
   </div>
 </footer>
 <script>
@@ -168,7 +162,7 @@ function note(text, cls) { return add(el("div", "note" + (cls ? " " + cls : ""),
 function setBusy(b) {
   busy = b;
   sendBtn.textContent = b ? "Stop" : "Send";
-  $("hint").textContent = b ? "esc stop" : "⏎ send";
+  sendBtn.title = b ? "Stop (esc)" : "Send (⏎)";
   document.querySelectorAll("button[data-needs-idle]").forEach((x) => (x.disabled = b));
   if (b && !thinkingEl) { thinkingEl = el("div", "thinking", "thinking "); log.appendChild(thinkingEl); }
   if (!b && thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
