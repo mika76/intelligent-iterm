@@ -12,7 +12,7 @@ built for iTerm2 on macOS. It runs as an iTerm2 Python API script and talks to C
 through the [Agent Client Protocol](https://agentclientprotocol.com), using your existing
 Claude Code login. No API keys are stored.
 
-> **Status: 0.2, an early release.** Tested on iTerm2 3.7.7 only. Expect rough edges, and
+> **Status: 0.3, an early release.** Tested on iTerm2 3.7.7 only. Expect rough edges, and
 > see [Known limitations](#known-limitations).
 
 ## Quick start
