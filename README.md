@@ -13,7 +13,7 @@ through the [Agent Client Protocol](https://agentclientprotocol.com), using your
 Claude Code login. No API keys are stored.
 
 > **Status: 0.3, an early release.** Tested on iTerm2 3.7.7 only. Expect rough edges, and
-> see [Known limitations](#known-limitations).
+> see [Known limitations](#known-limitations). What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
