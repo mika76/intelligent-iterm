@@ -682,7 +682,7 @@ input.addEventListener("keydown", (e) => {
 $("newchat").onclick = () => api("/api/new");
 // Docked (bottom split) vs toolbelt: same page, the server adds dock=1 for the split.
 const docked = new URLSearchParams(location.search).get("dock") === "1";
-$("dock").textContent = docked ? "⌄" : "⬓";
+$("dock").textContent = docked ? "▾" : "⬓";  // same ▾ as next to the agent name
 $("dock").title = (docked ? "Hide the panel" : "Open the panel below the terminal") + " (⌃⇧.)";
 $("dock").setAttribute("aria-label", $("dock").title);
 $("dock").onclick = () => api("/api/dock");
@@ -711,13 +711,9 @@ function choiceName(o) {
 function renderHeader() {
   if (!header) return;
   const opts = header.options || [];
-  const model = opts.find((o) => o.kind === "model");
   const mode = opts.find((o) => o.kind === "mode");
-  // Label: agent, and the model only when it isn't the agent's default.
-  const label = [document.createTextNode(header.name)];
-  if (model && model.current && model.current !== "default") label.push(el("span", "meta", " · " + choiceName(model)));
-  label.push(el("span", "meta caret", " ▾"));
-  $("agentline").replaceChildren(...label);
+  // Label: just the agent; the model and the rest are in the menu.
+  $("agentline").replaceChildren(document.createTextNode(header.name), el("span", "meta caret", " ▾"));
   // Badge: the mode, only when it isn't the one the agent started in (Manual for Claude Code).
   const badge = $("modebadge");
   badge.hidden = !(mode && header.startMode && mode.current !== header.startMode);

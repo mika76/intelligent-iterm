@@ -53,7 +53,7 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
 1. **Chat panel** with streamed replies, in either of two places:
    - **Docked below the terminal** (like Intelligent Terminal's agent pane). Open or close
      it for the current tab with **Ctrl+Shift+.**, the status bar button (**⬓ Claude Code ▴**, showing the tab's agent),
-     the panel's **⌄** button, or **⬓** in the toolbelt. To add the button, go to iTerm2 >
+     the panel's **▾** button, or **⬓** in the toolbelt. To add the button, go to iTerm2 >
      Settings > Profiles > Session > *Configure Status Bar* and drag in **Agent panel**.
      It only appears in the picker while the script is running. It's an iTerm2 browser split pane, created with per-session settings,
      so no profile is added to your iTerm2 config. The script hides the pane's browser
@@ -95,9 +95,9 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    login and shell integration, and shows anything that needs fixing with the fix.
    `/doctor` shows the full report.
 
-The header is one quiet line: the agent (and the model, when it isn't the default), a
+The header is one quiet line: the agent, a
 badge when the mode isn't the one the agent started in (for example **Accept edits**),
-what's happening right now (starting, errors), and **＋** (new chat) and **⌄** (hide).
+what's happening right now (starting, errors), and **＋** (new chat) and **▾** (hide).
 Click the agent name, or type `/settings`, for the menu: agent, **model**, **mode**,
 **effort**, the terminal-context checkbox, and the version and working folder. A change
 applies to every tab using that agent, and is remembered for new tabs and the next run

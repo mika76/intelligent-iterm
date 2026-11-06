@@ -649,8 +649,21 @@ def picker_options(options: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         out.append({"kind": kind, "id": o.get("id"), "name": o.get("name") or kind,
                     "current": o.get("currentValue"),
-                    "choices": [{"value": c.get("value"), "name": _choice_label(kind, c)}
-                                for c in o.get("options") or [] if c.get("value") not in HIDDEN_CHOICES]})
+                    "choices": _unique_choices(kind, o.get("options") or [])})
+    return out
+
+
+def _unique_choices(kind: str, options: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Picker choices without hidden ones, and each value once (GitHub Copilot lists
+    "auto" twice)."""
+    seen: set = set()
+    out = []
+    for c in options:
+        value = c.get("value")
+        if value in HIDDEN_CHOICES or value in seen:
+            continue
+        seen.add(value)
+        out.append({"value": value, "name": _choice_label(kind, c)})
     return out
 
 

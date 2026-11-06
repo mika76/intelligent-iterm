@@ -178,6 +178,12 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         evs = [q.get_nowait() for _ in range(q.qsize())]
         self.assertEqual([e["type"] for e in evs], ["tool", "tool_hidden"])
 
+    def test_duplicate_choices_shown_once(self):
+        from intelligent_iterm.panel import picker_options
+        opts = [{"id": "model", "type": "select", "category": "model", "currentValue": "auto", "options": [
+            {"value": "auto", "name": "Auto"}, {"value": "auto", "name": "Auto"}, {"value": "x", "name": "X"}]}]
+        self.assertEqual([c["value"] for c in picker_options(opts)[0]["choices"]], ["auto", "x"])
+
     async def test_unknown_agent_refused(self):
         self.assertEqual(await self.post("/api/agent", {"agent": "nope", "conv": "A"}), 500)
 
