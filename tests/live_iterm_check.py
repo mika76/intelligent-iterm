@@ -69,6 +69,21 @@ async def main(connection):
         check("insert typed at prompt", typed, rows[-5:])
         check("insert NOT executed", not ran, ran)
 
+        # Never type into a running program: Run while `sleep` runs is refused.
+        await session.async_send_text("\x15sleep 3\n")
+        await asyncio.sleep(0.8)
+        try:
+            await term.insert(f"echo {MARK}-busy", run=True)
+            check("refuses to type while a command runs", False)
+        except ValueError as e:
+            check("refuses to type while a command runs", "sleep is still running" in str(e), str(e))
+        await asyncio.sleep(3.0)
+        await term.insert(f"echo {MARK}-after", run=True)
+        await asyncio.sleep(1.0)
+        screen = await session.async_get_screen_contents()
+        rows = [screen.line(i).string for i in range(screen.number_of_lines)]
+        check("types again once the prompt is back", any(r.strip() == f"{MARK}-after" for r in rows), rows[-4:])
+
         # Multi-line: one bracketed paste, kept in the zsh buffer until Enter.
         await session.async_send_text("\x15")
         if await term.multiline_refusal(session.session_id) is None:

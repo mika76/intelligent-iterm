@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from intelligent_iterm.safety import multiline_refusal, risks  # noqa: E402
+from intelligent_iterm.safety import foreground_refusal, multiline_refusal, risks  # noqa: E402
 
 
 class RiskTest(unittest.TestCase):
@@ -51,6 +51,18 @@ class MultilineTest(unittest.TestCase):
         self.assertIn("single line", multiline_refusal("bash", "bash"))
         self.assertIn("single line", multiline_refusal(None, None))
         self.assertIn("python3", multiline_refusal("zsh", "python3"))  # a REPL is in front
+
+
+
+class ForegroundTest(unittest.TestCase):
+    def test_types_only_at_the_prompt(self):
+        self.assertIsNone(foreground_refusal("zsh", "zsh"))
+        self.assertIsNone(foreground_refusal("-zsh", "-zsh"))
+        self.assertIsNone(foreground_refusal("bash", "login"))
+        self.assertIsNone(foreground_refusal(None, "find"))  # unknown shell: can't tell, allow
+        for job in ("find", "Python", "vim"):
+            self.assertIn(f"{job} is still running", foreground_refusal("zsh", job))
+        self.assertIn("still running", multiline_refusal("zsh", "find"))
 
 
 if __name__ == "__main__":

@@ -242,6 +242,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - Nothing is typed into your terminal without a click. Insert never sends Enter; Run sends
   Enter once, for the command shown on the card, and asks for a second click when the
   command looks destructive. That check is a pattern list, not a sandbox: read what you run.
+- Insert and Run only type at a waiting shell prompt. While a command, REPL or editor
+  is running in that terminal they're refused with a message, so keystrokes never go to
+  the wrong program or sit half-consumed in the input queue.
 - Multi-line text is only sent as a bracketed paste, and only to zsh or fish when the shell
   is the foreground job; otherwise it's refused, so lines can't run one by one. Other
   control characters are always refused.

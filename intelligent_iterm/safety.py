@@ -60,14 +60,26 @@ def risks(command: str) -> List[str]:
 PASTE_SAFE_SHELLS = ("zsh", "fish")
 
 
-def multiline_refusal(shell: Optional[str], job: Optional[str]) -> Optional[str]:
-    """None if a multi-line command can be pasted at this prompt; else why not."""
+def foreground_refusal(shell: Optional[str], job: Optional[str]) -> Optional[str]:
+    """None if the shell is waiting at its prompt; else why typing there now is wrong.
+
+    Text typed while another program runs goes to that program (a REPL, an
+    editor, a y/n question) or sits in the terminal's input queue, where a ^C
+    can leave half of it behind."""
     shell = (shell or "").lstrip("-")
     job = (job or "").lstrip("-")
+    if not shell or not job or job in (shell, "login"):
+        return None
+    return (f"{job} is still running in the terminal. Wait for it to finish (or press ⌃C), "
+            "then click again.")
+
+
+def multiline_refusal(shell: Optional[str], job: Optional[str]) -> Optional[str]:
+    """None if a multi-line command can be pasted at this prompt; else why not."""
+    if foreground_refusal(shell, job):
+        return foreground_refusal(shell, job)
+    shell = (shell or "").lstrip("-")
     if shell not in PASTE_SAFE_SHELLS:
         return (f"Multi-line commands can only be inserted in zsh or fish (this terminal runs "
                 f"{shell or 'an unknown shell'}); propose a single line, joining steps with && or ;")
-    if job and job != shell:
-        return (f"{job} is running in the terminal, not the shell, so a multi-line command could run "
-                f"line by line; propose a single line")
     return None

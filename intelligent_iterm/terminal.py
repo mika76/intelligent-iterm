@@ -260,13 +260,16 @@ class ItermTerminal:
 
     # ---- typing into the terminal ---------------------------------------------
 
+    async def _shell_and_job(self, session: iterm2.Session):
+        shell = await session.async_get_variable("shell") or await self._shell(session)
+        return shell, await session.async_get_variable("jobName")
+
     async def multiline_refusal(self, session_id: Optional[str] = None) -> Optional[str]:
         """None if a multi-line command can be pasted at this session's prompt; else why not."""
         session = (self.app.get_session_by_id(session_id) if session_id else None) or self.active_session()
         if session is None:
             return "no active terminal session"
-        shell = await session.async_get_variable("shell") or await self._shell(session)
-        return safety.multiline_refusal(shell, await session.async_get_variable("jobName"))
+        return safety.multiline_refusal(*await self._shell_and_job(session))
 
     async def insert(self, text: str, session_id: Optional[str] = None, run: bool = False) -> None:
         """Type `text` at the prompt of `session_id` (default: the active session).
@@ -284,10 +287,12 @@ class ItermTerminal:
         session = (self.app.get_session_by_id(session_id) if session_id else None) or self.active_session()
         if session is None:
             raise RuntimeError("no active terminal session")
+        shell, job = await self._shell_and_job(session)
+        # Only type at a waiting prompt: never into a running program.
+        why = safety.multiline_refusal(shell, job) if multiline else safety.foreground_refusal(shell, job)
+        if why:
+            raise ValueError(why)
         if multiline:
-            why = await self.multiline_refusal(session.session_id)
-            if why:
-                raise ValueError(why)
             command = PASTE_START + command + PASTE_END
         await session.async_send_text(command + ("\r" if run else ""), suppress_broadcast=True)
         await session.async_activate()  # focus the terminal so Enter is one keypress away
