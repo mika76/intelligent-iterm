@@ -1,9 +1,7 @@
 """Bottom-docked panel: an iTerm2 *browser* split pane showing the panel page,
 toggled per tab with Ctrl+Shift+. (Intelligent Terminal's agent-pane shortcut).
 It's created once per tab; hiding maximizes the terminal pane (View > Maximize
-Active Pane), which keeps the panel loaded so showing it again is instant. A new
-pane is created hidden the same way and shown once its page has connected, so
-WebKit's white pre-paint background and the URL bar never show.
+Active Pane), which keeps the panel loaded so showing it again is instant.
 
 The split is left at iTerm2's default size: resizing it via update_layout mixes
 terminal rows with browser-pane points and makes iTerm2 resize the window.
@@ -51,9 +49,13 @@ tell application "System Events"
   end tell
 end tell
 """
-PAGE_TIMEOUT = 3.0  # show a new pane after this even if its page hasn't connected
-PAINT_DELAY = 0.05  # after the page connects, for its first layout
-SETTLE_DELAY = 0.2  # after showing the pane, for WebKit to draw it and learn its color
+PAGE_TIMEOUT = 3.0  # longest to wait for a new pane's page to connect
+# iTerm2's Minimal theme tints the window from the page color WebKit reports when
+# the page finishes loading; for a page not yet drawn that's WebKit's light
+# default, and a later correction is rate limited (or ignored mid-load, leaving
+# the pane light for good). So the docked page is kept loading (web.py /hold)
+# until it has been on screen this long.
+SETTLE_DELAY = 0.2
 
 
 class Dock:
@@ -103,39 +105,28 @@ class Dock:
         profile._simple_set("Initial URL", self.url_for(tab.tab_id))  # pylint: disable=protected-access
         keep_toolbar = os.environ.get("INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR") == "1"
         if self.hub is not None:
+            # Keep the page loading until it has been drawn: see SETTLE_DELAY.
             self.hub.hold(tab.tab_id)
-        # iTerm2 only starts loading a browser pane once it's in the window, so
-        # it has to be shown for a moment; then hide it behind the maximized
-        # terminal, where it loads. Sent together, so iTerm2 handles them before
-        # it next draws (a split can't go in a Transaction).
         panel = await session.async_split_pane(vertical=False, profile_customizations=profile)
         self._panels[tab.tab_id] = panel.session_id
         # The new pane's focus event can arrive before we knew it was a panel.
         self.terminal.remember_terminal(tab.tab_id, session.session_id)
+        # Right away and together, while the new pane is still blank: its URL
+        # bar, and its colors (it starts black and ignores colors passed with
+        # the split; the Minimal theme tints the window from them until the
+        # page reports its own).
         toolbar = None if keep_toolbar else _hide_toolbar_by_method(panel)
-        # A browser pane starts black and ignores colors passed with the split.
-        hidden, _, _, _ = await asyncio.gather(
-            toolbar or _none(),
-            session.async_activate(),
-            iterm2.MainMenu.async_select_menu_item(self.connection, MAXIMIZE_PANE),
-            _set_colors(panel, colors))
+        hidden, _ = await asyncio.gather(toolbar or _none(), _set_colors(panel, colors))
+        await _set_state(session, "open")
+        await _set_state(panel, "open")  # the panel shows the window's status bar while focused
         if window is not None and frame is not None:
             # iTerm2 snaps the window to whole rows after a split, shrinking it a
             # few points each time; put the original size back.
+            await asyncio.sleep(0.15)
             await window.async_set_frame(frame)
         if self.hub is not None:
-            if await self.hub.wait_pinned(tab.tab_id, PAGE_TIMEOUT):
-                await asyncio.sleep(PAINT_DELAY)
-            else:
-                log.info("panel page didn't connect in %ss; showing it anyway", PAGE_TIMEOUT)
-        await session.async_activate()
-        await iterm2.MainMenu.async_select_menu_item(self.connection, MAXIMIZE_PANE)
-        await panel.async_activate()
-        await _set_state(session, "open")
-        await _set_state(panel, "open")  # the panel shows the window's status bar while focused
-        if self.hub is not None:
-            # Now on screen, WebKit knows the page's real (dark) color; let the
-            # page finish loading so iTerm2 tints the window with that.
+            if not await self.hub.wait_pinned(tab.tab_id, PAGE_TIMEOUT):
+                log.info("panel page didn't connect in %ss", PAGE_TIMEOUT)
             await asyncio.sleep(SETTLE_DELAY)
             self.hub.release(tab.tab_id)
         if toolbar is not None and not hidden:
