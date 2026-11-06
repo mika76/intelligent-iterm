@@ -112,7 +112,7 @@ async def main(connection: iterm2.Connection) -> None:
     # Two ways to show the same panel: the toolbelt (right side) and a
     # bottom-docked browser split toggled with Ctrl+Shift+.
     await iterm2.async_register_web_view_tool(
-        connection, "Claude", TOOL_ID, False, web.url)
+        connection, "Agent", TOOL_ID, False, web.url)
     log.info("registered toolbelt tool %s", TOOL_ID)
     dock = Dock(connection, app, terminal, web.url, hub=hub)
     # The status bar button shows each tab's agent.

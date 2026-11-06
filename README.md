@@ -62,7 +62,7 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
      System Events and use Accessibility. If you decline, the URL bar stays; you can hide it
      yourself with Web > Show Toolbar, or set `INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR=1`
      to skip the step.
-   - **In the toolbelt** on the right (View > Toolbelt > Claude).
+   - **In the toolbelt** on the right (View > Toolbelt > Agent).
 
    **Each tab has its own conversation**, with its own Claude Code process. A tab's
    docked panel always shows that tab's conversation; the toolbelt shows the active
@@ -168,7 +168,7 @@ Then in iTerm2:
 
 1. **Scripts > AutoLaunch > intelligent_iterm_panel.py** to start it now (it also starts
    automatically whenever iTerm2 launches).
-2. **View > Toolbelt > Claude** to add the panel to the toolbelt.
+2. **View > Toolbelt > Agent** to add the panel to the toolbelt.
 3. **View > Toolbelt > Show Toolbelt** (⇧⌘B) to show it.
 
 Starting the script again (for example after an update) is safe: running it from the

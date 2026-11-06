@@ -83,7 +83,7 @@ async def main(connection):
         check("panel page loaded and connected", connected)
         check("panel page shows its own tab's conversation",
               (tab.tab_id, True) in hub._clients.values(), list(hub._clients.values()))
-        check("panel page title", (await panel_session.async_get_variable("session.name") or "").startswith("Claude"),
+        check("panel page title", (await panel_session.async_get_variable("session.name") or "").startswith(("Claude Code", "Agent panel")),
               await panel_session.async_get_variable("session.name"))
         await asyncio.sleep(0.5)
         check("terminal shrank above the panel",

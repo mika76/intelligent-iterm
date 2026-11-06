@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude Panel</title>
+<title>Agent panel</title>
 <style>
   /* Defaults; replaced at runtime by the active iTerm2 profile's colors and font. */
   :root {
@@ -712,6 +712,7 @@ function renderHeader() {
   if (!header) return;
   const opts = header.options || [];
   const mode = opts.find((o) => o.kind === "mode");
+  document.title = header.name;  // the browser pane's title: this tab's agent
   // Label: just the agent; the model and the rest are in the menu.
   $("agentline").replaceChildren(document.createTextNode(header.name), el("span", "meta caret", " ▾"));
   // Badge: the mode, only when it isn't the one the agent started in (Manual for Claude Code).
