@@ -40,6 +40,10 @@
   }
   button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: .45; cursor: default; }
+  .proposal .row button:focus-visible, .card .row button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .keyhint { color: var(--dim); font-size: var(--small); margin-left: auto; }
   button.primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--bg)); }
   button.link { border: none; padding: 0 2px; color: var(--dim); }
 
@@ -200,6 +204,7 @@ let agentCommands = [];
 // The server says which in a "switch" event; every request names it.
 const tabParam = new URLSearchParams(location.search).get("tab") || "";
 let conv = tabParam;
+let agentName = "the agent";  // this tab's agent, from the header event
 let busy = false, agentEl = null, agentText = "", thinkingEl = null, lastFailure = null;
 
 // ---- small helpers -------------------------------------------------------
@@ -447,6 +452,7 @@ function handle(ev) {
       agentEl = null;
       const m = add(el("div", "msg user", ev.text));
       if (ev.context) m.appendChild(el("span", "ctx", ev.context));
+      log.scrollTop = log.scrollHeight;  // a new message: back to the bottom, even if you'd scrolled up
       setBusy(true);
       break;
     }
@@ -473,18 +479,23 @@ function handle(ev) {
       agentEl = null;
       const card = add(el("div", "card"));
       card.id = "perm-" + ev.id;
-      card.appendChild(el("div", "", "Allow Claude to run: " + ev.title + "?"));
+      card.appendChild(el("div", "", "Allow " + agentName + " to run: " + ev.title + "?"));
       const row = card.appendChild(el("div", "row"));
       ev.options.forEach((o) => {
         const b = el("button", o.kind && o.kind.startsWith("allow") ? "" : "primary", o.name);
-        b.onclick = () => api("/api/permission", { id: ev.id, optionId: o.optionId });
+        b.dataset.kind = o.kind || "";
+        b.onclick = () => { api("/api/permission", { id: ev.id, optionId: o.optionId }); input.focus(); };
         row.appendChild(b);
       });
+      row.appendChild(keyHint("Y allow · N deny"));
       break;
     }
     case "permission_done": {
       const card = $("perm-" + ev.id);
-      if (card) card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      if (card) {
+        card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        card.querySelectorAll(".keyhint").forEach((h) => h.remove());
+      }
       break;
     }
     case "failed_command":
@@ -520,9 +531,11 @@ function handle(ev) {
           }
           clearTimeout(armed);
           api("/api/proposal", { id: ev.id, action });
+          if (action === "explain" || action === "dismiss") input.focus();  // Insert/Run focus the terminal
         };
         row.appendChild(b);
       });
+      row.appendChild(keyHint(""));
       break;
     }
     case "proposal_done": {
@@ -550,6 +563,7 @@ function handle(ev) {
       break;
     }
     case "agent": {
+      agentName = ev.name;
       let who = document.createTextNode(ev.name);
       if ((ev.agents || []).length > 1) {  // more than one ACP agent installed: let the user pick
         who = el("select", "agentpick");
@@ -650,6 +664,10 @@ function pickSlash() {
 function fitInput() { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
 input.addEventListener("input", () => { slashSel = 0; updateSlash(); fitInput(); });
 input.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp" && !input.value && !slashItems.length && focusWaitingCard()) {
+    e.preventDefault();
+    return;
+  }
   if (slashItems.length && ["ArrowDown", "ArrowUp", "Tab", "Enter", "Escape"].includes(e.key)) {
     e.preventDefault();
     if (e.key === "ArrowDown") slashSel = (slashSel + 1) % slashItems.length;
@@ -672,6 +690,46 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); api("/api/dock");
   }
 });
+// ---- keyboard for waiting cards (like Intelligent Terminal's pane) -------------
+// ↑ from an empty input moves into the newest card that is waiting for an answer;
+// ←/→ (or ↑/↓) move between its buttons, Enter or Space presses one, Esc goes back
+// to the input. On a permission card, Y and N allow and deny.
+function keyHint(extra) {
+  return el("span", "keyhint", "↑ keys" + (extra ? " · " + extra : ""));
+}
+function waitingCard() {
+  const cards = [...log.querySelectorAll(".proposal, .card")]
+    .filter((c) => c.querySelector(".row button:not(:disabled)"));
+  return cards[cards.length - 1] || null;
+}
+function focusWaitingCard() {
+  const card = waitingCard();
+  if (!card) return false;
+  const first = card.querySelector(".row button:not(:disabled)");
+  first.focus();
+  first.scrollIntoView({ block: "nearest" });
+  return true;
+}
+log.addEventListener("keydown", (e) => {
+  const b = e.target;
+  const row = b.tagName === "BUTTON" && b.closest(".proposal .row, .card .row");
+  if (!row || e.metaKey || e.ctrlKey || e.altKey) return;
+  const buttons = [...row.querySelectorAll("button:not(:disabled)")];
+  const i = buttons.indexOf(b);
+  const move = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+  if (move) {
+    e.preventDefault();
+    buttons[Math.max(0, Math.min(buttons.length - 1, i + move))].focus();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    focusInputAtEnd();
+  } else if (row.closest(".card") && "yYnN".includes(e.key) && e.key.length === 1) {
+    const want = e.key.toLowerCase() === "y" ? "allow" : "reject";
+    const pick = buttons.find((x) => x.dataset.kind.startsWith(want));
+    if (pick) { e.preventDefault(); pick.click(); }
+  }
+});
+
 // Typing anywhere in the panel goes to the input: clicking a message, a card or a
 // button takes the focus away from it. Shortcuts (⌘C on a selection…) are left alone.
 function typesText(el) {

@@ -1,5 +1,6 @@
 """Manual live check: in iTerm2's docked panel (WebKit), typing while the focus is
-off the input (here: on the Send button) still lands in the input. Presses keys
+off the input (here: on the Send button) still lands in the input, and a waiting
+command card can be answered with Up, Right and Enter. Presses keys
 through System Events, so iTerm2 must stay frontmost while it runs; opens its own
 window and closes it at the end.
 
@@ -54,6 +55,25 @@ async def main(c):
             if got: break
             await asyncio.sleep(0.25)
         print("RESULT:", repr(got), "PASS" if got == "hello panel" else "FAIL", flush=True)
+
+        # Keys on a waiting card: Up from the empty input, Right to Run, Enter.
+        await asyncio.sleep(1.0)
+        await panel.api_send({"conv": tab, "text": "propose something"})
+        for _ in range(40):
+            if panel.conversation(tab).proposals: break
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
+        await app.async_activate(); await ps.async_activate(); await asyncio.sleep(0.5)
+        print("keys:", keys('key code 126'), keys('key code 124'), keys('key code 36'))  # Up, Right, Return
+        outcome = None
+        for _ in range(20):
+            while not q.empty():
+                ev = q.get_nowait()
+                if ev["type"] == "proposal_done": outcome = ev["outcome"]
+            if outcome: break
+            await asyncio.sleep(0.25)
+        # "ran" only comes after the command was typed into the terminal (insert raises otherwise).
+        print("CARD:", repr(outcome), "PASS" if outcome == "ran" else "FAIL", flush=True)
     finally:
         await w.async_close(force=True)
         await panel.shutdown(); await web.stop()
