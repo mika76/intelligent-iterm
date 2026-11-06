@@ -38,5 +38,10 @@ if ! ls -d "$HOME/Library/Application Support/iTerm2/iterm2env"* >/dev/null 2>&1
   echo "      In iTerm2: Scripts > Manage > Install Python Runtime."
 fi
 echo
+echo "Checking the setup…"
+if command -v python3 >/dev/null; then
+  (cd "$REPO" && python3 -m intelligent_iterm.doctor) || true
+fi
+echo
 echo "Next: in iTerm2 run Scripts > AutoLaunch > intelligent_iterm_panel.py (or restart iTerm2),"
 echo "      then View > Toolbelt > Claude, and View > Toolbelt > Show Toolbelt."

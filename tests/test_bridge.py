@@ -98,6 +98,15 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
                                   token="secret")
         self.assertTrue(json.loads(body)["result"]["isError"])
 
+    async def test_doctor_reports_every_check(self):
+        status, _ = await http(self.port, "POST", "/api/doctor", {}, token="secret")
+        self.assertEqual(status, 200)
+        ev = (await self.events_until("doctor"))[-1]
+        names = [c["name"] for c in ev["checks"]]
+        self.assertIn("Node.js", names)
+        self.assertIn("Claude Code login", names)
+        self.assertFalse(ev["problemsOnly"])
+
     async def test_page_served_and_token_required(self):
         status, body = await http(self.port, "GET", "/")
         self.assertEqual(status, 200)

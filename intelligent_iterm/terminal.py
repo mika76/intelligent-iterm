@@ -187,6 +187,16 @@ class ItermTerminal:
             ctx["screen"] = _join_lines([contents.line(i) for i in range(contents.number_of_lines)])
         return ctx
 
+    async def has_shell_integration(self) -> Optional[bool]:
+        """Whether the active session reports prompts (OSC 133); None without a session."""
+        session = self.active_session()
+        if session is None:
+            return None
+        try:
+            return bool(await iterm2.async_list_prompts(self.connection, session.session_id))
+        except Exception:  # noqa: BLE001 - old iTerm2 without prompt history
+            return False
+
     async def _shell(self, session: iterm2.Session) -> Optional[str]:
         """The pane's shell (zsh, bash, fish…), so suggestions use its syntax."""
         try:

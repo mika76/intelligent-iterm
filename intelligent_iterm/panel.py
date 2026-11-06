@@ -14,6 +14,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from . import doctor
 from .acp import AcpClient
 from .mcp import McpServer, Tool, ToolError
 from .web import EventHub
@@ -99,6 +100,7 @@ class Panel:
         self.mcp_endpoint: Optional[tuple] = None  # (url, token), set once the web server runs
         self._hidden_tool_calls: set = set()  # our own propose/read calls: shown as cards instead
         self._agent_version = ""
+        self._checked_setup = False
 
     def routes(self) -> Dict[str, Any]:
         return {
@@ -111,6 +113,7 @@ class Panel:
             "/api/new": self.api_new,
             "/api/hello": self.api_hello,
             "/api/open": self.api_open,
+            "/api/doctor": self.api_doctor,
         }
 
     # ---- UI endpoints ----------------------------------------------------
@@ -168,7 +171,25 @@ class Panel:
         """The page loaded: start Claude Code now so its model and / commands show up."""
         if self._agent is None:
             asyncio.ensure_future(self._warm_up())
+        if not self._checked_setup:  # once per run: show setup problems, if any
+            self._checked_setup = True
+            asyncio.ensure_future(self._report_setup(problems_only=True))
         return {}
+
+    async def api_doctor(self, _body: Dict[str, Any]) -> Dict[str, Any]:
+        """/doctor: the full setup report."""
+        await self._report_setup(problems_only=False)
+        return {}
+
+    async def _report_setup(self, problems_only: bool) -> None:
+        try:
+            checks = await doctor.all_checks(getattr(self.terminal, "has_shell_integration", None))
+        except Exception:  # noqa: BLE001 - never let a check break the panel
+            log.exception("setup checks failed")
+            return
+        shown = doctor.problems(checks) if problems_only else checks
+        if shown:
+            self.hub.publish({"type": "doctor", "checks": shown, "problemsOnly": problems_only})
 
     async def _warm_up(self) -> None:
         try:

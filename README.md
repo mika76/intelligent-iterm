@@ -79,8 +79,11 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    **Run ⏎** (type it and press Enter) and **Dismiss**. Claude is told which you chose.
    Commands only go to your terminal when you click; multi-line commands and control
    characters are refused. Single-line commands in `bash` blocks also get Insert and Copy.
-5. **/ commands**: type `/` for the panel's own (`/new`, `/explain`, `/screen`, `/hide`)
-   and Claude Code's (your skills and custom commands).
+5. **/ commands**: type `/` for the panel's own (`/new`, `/explain`, `/screen`, `/hide`,
+   `/doctor`) and Claude Code's (your skills and custom commands).
+6. **Setup checks**: when the panel opens it checks Node, the adapter, the Claude Code
+   login and shell integration, and shows anything that needs fixing with the fix.
+   `/doctor` shows the full report.
 
 The header shows the agent, adapter version and model, like Intelligent Terminal's pane.
 
@@ -111,7 +114,7 @@ Claude Code's **Manual** permission mode. Each tool call shows Allow/Reject butt
 ./install.sh
 ```
 
-This runs `npm ci` for the adapter and writes a small launcher to
+This runs `npm ci` for the adapter, checks the setup, and writes a small launcher to
 `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/intelligent_iterm_panel.py`.
 The launcher points back at this folder, so keep the folder where it is.
 
@@ -126,6 +129,13 @@ Starting the script again (for example after an update) is safe: running it from
 Scripts menu starts a new copy, and any older copy exits within a couple of seconds.
 
 To remove it: `./install.sh uninstall`.
+
+If something doesn't work, check the setup from a shell, or type `/doctor` in the panel
+for the checks that need iTerm2:
+
+```bash
+python3 -m intelligent_iterm.doctor
+```
 
 Logs go to `~/Library/Logs/intelligent-iterm.log`. iTerm2's Scripts > Manage > Console
 also shows the script's output.
@@ -179,6 +189,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 | `intelligent_iterm/acp.py` | Minimal ACP (JSON-RPC over stdio) client |
 | `intelligent_iterm/mcp.py` | Minimal MCP server for the agent's `propose_command` / `read_terminal` tools |
 | `intelligent_iterm/web.py` | Local HTTP + Server-Sent Events server |
+| `intelligent_iterm/doctor.py` | Setup checks behind `/doctor` and the installer |
 | `intelligent_iterm/config.py` | Finds node, claude and the adapter outside your shell's PATH |
 | `intelligent_iterm/static/index.html` | The chat UI (no build step) |
 

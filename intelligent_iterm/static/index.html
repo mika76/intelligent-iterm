@@ -115,6 +115,15 @@
   .proposal pre::before { content: "$ "; color: var(--dim); }
   .proposal .row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
   .proposal .outcome { color: var(--dim); font-size: var(--small); }
+  .doctor { border: 1px solid var(--border); border-left: 2px solid var(--yellow); padding: 6px 8px; }
+  .doctor.allok { border-left-color: var(--green); }
+  .doctor .head { color: var(--dim); font-size: var(--small); margin-bottom: 4px; }
+  .doctor .mark { display: inline-block; width: 2ch; }
+  .doctor .ok .mark { color: var(--green); }
+  .doctor .warn .mark { color: var(--yellow); }
+  .doctor .fail .mark { color: var(--red); }
+  .doctor .detail { color: var(--dim); }
+  .doctor .fix { padding-left: 2ch; font-size: var(--small); }
 
   /* Input box, like Intelligent Terminal's agent pane */
   footer { padding: 6px 10px 8px; position: relative; }
@@ -478,6 +487,20 @@ function handle(ev) {
         { inserted: "inserted at the prompt", ran: "ran in the terminal", dismissed: "dismissed" }[ev.outcome] || ev.outcome));
       break;
     }
+    case "doctor": {
+      const allOk = ev.checks.every((c) => c.status === "ok");
+      const card = add(el("div", "doctor" + (allOk ? " allok" : "")));
+      card.appendChild(el("div", "head", ev.problemsOnly ? "Setup needs attention (/doctor for the full report)"
+        : allOk ? "Setup looks good" : "Setup check"));
+      ev.checks.forEach((c) => {
+        const row = card.appendChild(el("div", c.status));
+        row.appendChild(el("span", "mark", { ok: "✓", warn: "!", fail: "✗" }[c.status] || "?"));
+        row.appendChild(document.createTextNode(c.name + " "));
+        row.appendChild(el("span", "detail", c.detail));
+        if (c.fix && c.status !== "ok") card.appendChild(el("div", "fix", "→ " + c.fix));
+      });
+      break;
+    }
     case "agent":
       $("agentline").replaceChildren(document.createTextNode(ev.name),
         el("span", "meta", [ev.version && " · v" + ev.version, ev.model && " · " + ev.model].filter(Boolean).join("")));
@@ -519,6 +542,7 @@ const PANEL_COMMANDS = [
   { name: "new", description: "Start a fresh conversation", run: () => api("/api/new") },
   { name: "explain", description: "Explain the last failed command", run: () => lastFailure ? $("explain").click() : note("No failed command to explain") },
   { name: "screen", description: "Attach the visible screen to the next message", run: () => { $("screen").checked = true; } },
+  { name: "doctor", description: "Check the setup (Node, Claude Code, shell integration)", run: () => api("/api/doctor") },
   { name: "hide", description: "Hide the panel (⌃⇧.)", run: () => api("/api/dock") },
 ];
 const slash = $("slash");
