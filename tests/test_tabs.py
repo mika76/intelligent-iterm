@@ -92,8 +92,8 @@ class TabsTest(unittest.IsolatedAsyncioTestCase):
         qa, _ = self.hub.subscribe("A")
         qb, _ = self.hub.subscribe("B")
         self.panel.command_failed({"id": "sB:1", "session_id": "sB", "command": "make", "exit": 2})
-        ev = await asyncio.wait_for(qb.get(), 1)
-        self.assertEqual(ev["type"], "failed_command")
+        evs = [qb.get_nowait() for _ in range(qb.qsize())]
+        self.assertEqual([e["type"] for e in evs if e["type"] != "agent"], ["failed_command"])
         self.assertTrue(qa.empty())
 
     async def test_proposal_goes_to_the_calling_conversation(self):

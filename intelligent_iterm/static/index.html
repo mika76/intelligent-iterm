@@ -51,11 +51,17 @@
   header .title { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header .title::before { content: "✳ "; color: var(--accent); }
   header .title .meta { color: var(--dim); }
-  header .status { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  header .pickers { display: flex; gap: 2px; white-space: nowrap; }
+  header .status { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  header select.agentpick {
+    background: transparent; color: var(--fg); border: 1px solid transparent; border-radius: 3px;
+    font: inherit; padding: 0 2px; cursor: pointer;
+  }
+  header select.agentpick:hover, header select.agentpick:focus { border-color: var(--border); outline: none; }
+  header .pickers { display: flex; gap: 2px; white-space: nowrap; flex: none; }
+  header .pickers select { flex: none; }
   header .pickers select {
     background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 3px;
-    font: inherit; padding: 0 2px; cursor: pointer; max-width: 16ch;
+    font: inherit; padding: 0 2px; cursor: pointer; max-width: 22ch;
   }
   header .pickers select:hover, header .pickers select:focus { color: var(--fg); border-color: var(--border); outline: none; }
   header .pickers option { background: var(--bg); color: var(--fg); }
@@ -458,6 +464,11 @@ function handle(ev) {
       line.textContent = mark + " " + (line.dataset.title || "tool");
       break;
     }
+    case "tool_hidden": {  // turned out to be one of the panel's own tools: shown as a card
+      const line = document.getElementById("tool-" + ev.id);
+      if (line) line.remove();
+      break;
+    }
     case "permission": {
       agentEl = null;
       const card = add(el("div", "card"));
@@ -536,12 +547,22 @@ function handle(ev) {
       });
       break;
     }
-    case "agent":
-      $("agentline").replaceChildren(document.createTextNode(ev.name),
-        el("span", "meta", ev.version ? " · v" + ev.version : ""));
+    case "agent": {
+      let who = document.createTextNode(ev.name);
+      if ((ev.agents || []).length > 1) {  // more than one ACP agent installed: let the user pick
+        who = el("select", "agentpick");
+        who.title = "Agent for this tab (starts a new conversation; new tabs use it too)";
+        ev.agents.forEach((a) => { const o = el("option", "", a.name); o.value = a.id; who.appendChild(o); });
+        who.value = ev.id;
+        who.onchange = async () => {
+          const r = await api("/api/agent", { agent: who.value });
+          if (!r.ok) who.value = ev.id;
+        };
+      }
+      $("agentline").replaceChildren(who, el("span", "meta", ev.version ? " · v" + ev.version : ""));
       $("pickers").replaceChildren(...(ev.options || []).map((o) => {
         const sel = el("select");
-        sel.title = o.name + " (applies to every tab)";
+        sel.title = o.name + " (applies to every tab using this agent)";
         o.choices.forEach((c) => {
           const opt = el("option", "", c.name);
           opt.value = c.value;
@@ -555,6 +576,7 @@ function handle(ev) {
         return sel;
       }));
       break;
+    }
     case "commands":
       agentCommands = ev.commands || []; break;
     case "turn_end":

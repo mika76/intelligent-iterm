@@ -92,10 +92,29 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    login and shell integration, and shows anything that needs fixing with the fix.
    `/doctor` shows the full report.
 
-The header shows the agent and adapter version, like Intelligent Terminal's pane, and
-dropdowns for the **model**, **mode** and **effort**. A change applies to every tab's
-conversation at once, and is remembered for new tabs and the next run (in
+The header shows the agent and its version, like Intelligent Terminal's pane, and
+dropdowns for the **model**, **mode** and **effort**. A change applies to every tab using
+that agent, and is remembered for new tabs and the next run (in
 `~/Library/Application Support/intelligent-iterm/settings.json`).
+
+### Other agents
+
+Claude Code is the default, but the panel speaks the
+[Agent Client Protocol](https://agentclientprotocol.com), so other ACP agents work too.
+When **Gemini CLI** (`gemini --acp`), **OpenCode** (`opencode acp`) or **GitHub Copilot**
+(`copilot --acp`) is installed, the agent name in the header becomes a dropdown. Picking
+one starts this tab's conversation over with that agent and makes it the default for new
+tabs; other tabs keep theirs. Sign in to each agent's CLI once in a terminal first.
+
+Other ACP agents can be added in the settings file:
+
+```json
+{"agents": [{"id": "codex", "name": "Codex", "command": ["npx", "@zed-industries/codex-acp"]}]}
+```
+
+Agents other than Claude Code get the panel's instructions in their first message (ACP
+has no standard system prompt), and use the same `propose_command` and `read_terminal`
+tools over MCP. How well they use them depends on the agent and model.
 
 The agent prompts (system prompt and the Explain/fix instructions) are adapted from
 [Microsoft Intelligent Terminal](https://github.com/microsoft/intelligent-terminal)'s
@@ -205,6 +224,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 | `intelligent_iterm/acp.py` | Minimal ACP (JSON-RPC over stdio) client |
 | `intelligent_iterm/mcp.py` | Minimal MCP server for the agent's `propose_command` / `read_terminal` tools |
 | `intelligent_iterm/web.py` | Local HTTP + Server-Sent Events server |
+| `intelligent_iterm/settings.py` | Remembered agent and header choices, custom agents |
+| `intelligent_iterm/safety.py` | Warnings for destructive commands; when multi-line paste is safe |
 | `intelligent_iterm/doctor.py` | Setup checks behind `/doctor` and the installer |
 | `intelligent_iterm/config.py` | Finds node, claude and the adapter outside your shell's PATH |
 | `intelligent_iterm/static/index.html` | The chat UI (no build step) |
@@ -267,6 +288,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   not your Claude Code default.
 - **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,
   MCP servers), so the first turn has a sizeable cached prompt.
+- **Other agents** are tested lightly: OpenCode and GitHub Copilot connect, show their
+  options and use the panel's tools; Gemini CLI needs its own sign-in before it starts.
+  Their permission prompts, modes and slash commands are whatever the agent sends.
 - **Split panes in one tab** share that tab's conversation; the context comes from the
   pane you last used.
 

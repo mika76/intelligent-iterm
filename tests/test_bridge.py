@@ -137,7 +137,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         text = "".join(e["text"] for e in evs if e["type"] == "chunk")
         self.assertIn("The command in the terminal context failed", text)
         self.assertIn("untrusted data", text)
-        self.assertEqual(evs[0]["type"], "failed_command")
+        self.assertEqual([e for e in evs if e["type"] not in ("agent", "commands")][0]["type"], "failed_command")
         self.assertIn({"type": "failure_handled", "id": "p1"}, evs)
 
     async def test_permission_round_trip(self):

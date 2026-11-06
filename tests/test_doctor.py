@@ -41,6 +41,10 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(doctor.check_shell_integration(False)["status"], "warn")
         self.assertEqual(doctor.check_shell_integration(None)["status"], "warn")
 
+    def test_agents(self):
+        self.assertIn("none found", doctor.check_agents(["Claude Code"])["detail"])
+        self.assertIn("Gemini CLI", doctor.check_agents(["Claude Code", "Gemini CLI"])["detail"])
+
     def test_report(self):
         checks = [doctor.check("A", "ok", "fine", "unused"), doctor.check("B", "fail", "broken", "do X")]
         report = doctor.format_report(checks)

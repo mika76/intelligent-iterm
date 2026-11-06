@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from . import doctor, safety
 from .acp import AcpClient
 from .mcp import McpServer, Tool, ToolError
+from .config import AgentSpec
 from .settings import Settings
 from .web import MAIN, EventHub
 
@@ -82,28 +83,34 @@ corrected command.
   permission denied, no error at all), explain the blocker and the next step.
 """
 
-# Session options shown as pickers in the header, and choices the panel leaves
-# out (it relies on Claude asking before it acts).
-PICKERS = ("model", "mode", "effort")
-HIDDEN_CHOICES = {"mode": {"bypassPermissions"}}
+# Session options shown as pickers in the header, found by ACP category (each
+# agent names its options differently), and choices the panel leaves out: it
+# relies on the agent asking before it acts.
+PICKERS = (("model", ("model",)), ("mode", ("mode",)), ("effort", ("thought_level", "effort")))
+HIDDEN_CHOICES = {"bypassPermissions"}
 
 MAX_OUTPUT_CHARS = 12000
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # newlines are checked separately
 
 
 class Conversation:
-    """One chat with its own Claude Code process: one per iTerm2 tab."""
+    """One chat with its own agent process (Claude Code by default): one per iTerm2 tab."""
 
-    def __init__(self, panel: "Panel", key: str) -> None:
+    def __init__(self, panel: "Panel", key: str, spec: AgentSpec) -> None:
         self.panel = panel
         self.key = key
+        self.spec = spec
         self.agent: Optional[AcpClient] = None
+        self.version = ""
+        self.options: List[Dict[str, Any]] = []  # the session's config options (model, mode…)
+        self._needs_instructions = False  # agents without a system prompt get them in the first message
         self._lock = asyncio.Lock()
         self.turn: Optional[asyncio.Task] = None
         self.permissions: Dict[str, asyncio.Future] = {}
         self.proposals: Dict[str, Dict[str, Any]] = {}  # id -> {command, session_id, future}
         self.target_session: Optional[str] = None  # where proposals go (Explain: the failing pane)
         self._hidden_tool_calls: set = set()  # our own propose/read calls: shown as cards instead
+        self._shown_tool_calls: set = set()
 
     def publish(self, event: Dict[str, Any]) -> None:
         self.panel.hub.publish(event, self.key)
@@ -116,11 +123,10 @@ class Conversation:
         async with self._lock:
             if self.agent and self.agent.alive:
                 return self.agent
-            self.publish({"type": "status", "text": "Starting Claude Code…"})
-            agent = AcpClient(self.panel._agent_command, self.panel._agent_env,
-                              self.on_update, self.on_permission)
+            self.publish({"type": "status", "text": f"Starting {self.spec.name}…"})
+            agent = AcpClient(self.spec.command, self.spec.env, self.on_update, self.on_permission)
             init = await agent.start()
-            self.panel._agent_version = (init.get("agentInfo") or {}).get("version") or ""
+            self.version = (init.get("agentInfo") or {}).get("version") or ""
             ctx = await self.panel.terminal.get_context(include_screen=False)
             cwd = ctx.get("cwd") if ctx.get("cwd") and os.path.isdir(ctx["cwd"]) else os.path.expanduser("~")
             servers, allowed = [], None
@@ -130,28 +136,42 @@ class Conversation:
                             "headers": [{"name": "X-Token", "value": token},
                                         {"name": "X-Conversation", "value": self.key}]}]
                 allowed = self.panel.mcp.allowed_tool_names()
-            prefs = self.panel.settings
-            await agent.new_session(cwd, SYSTEM_PROMPT, mode=prefs.get("mode") or "default",
-                                    mcp_servers=servers, allowed_tools=allowed)
+            try:
+                # Claude Code starts in Manual mode; other agents in their own default.
+                await agent.new_session(cwd, SYSTEM_PROMPT, mode="default" if self.spec.claude else None,
+                                        mcp_servers=servers, allowed_tools=allowed)
+            except Exception:
+                await agent.stop()
+                raise
+            self._needs_instructions = not self.spec.claude
             options = agent.session_info.get("configOptions") or []
-            for config_id in ("model", "effort"):  # the user's picks from earlier
-                options = await _apply_option(agent, options, config_id, prefs.get(config_id))
-            self.panel._publish_agent(options)
-            self.publish({"type": "status", "text": f"Session started in {cwd}"})
+            for o in picker_options(options):  # the user's picks from earlier
+                options = await _apply_option(agent, options, o["id"],
+                                              self.panel.settings.option(self.spec.id, o["id"]))
             self.agent = agent
+            self.set_options(options)
+            self.publish({"type": "status", "text": f"Session started in {cwd}"})
             return agent
+
+    def set_options(self, options: List[Dict[str, Any]]) -> None:
+        self.options = options
+        self.panel.publish_header(self)
 
     async def warm_up(self) -> None:
         try:
             await self.ensure_agent()
         except Exception as e:  # noqa: BLE001 - shown again on the first message
             log.info("agent warm-up failed: %r", e)
-            self.publish({"type": "status", "text": f"Claude Code didn't start: {e}"})
+            self.publish({"type": "status", "text": f"{self.spec.name} didn't start: {e}"})
+            if not self.spec.claude:  # usually a missing sign-in; say how to fix it
+                self.publish({"type": "error", "message": f"{self.spec.name} didn't start: {str(e).rstrip('.')}. "
+                              f"Run `{os.path.basename(self.spec.command[0])}` in a terminal and sign in, "
+                              "then press New chat."})
 
     async def start_turn(self, text: str, blocks: List[Dict[str, Any]],
                          label: Optional[str]) -> Dict[str, Any]:
         if self.busy:
-            raise RuntimeError("Claude is still answering; wait or press Stop")
+            raise RuntimeError(f"{self.spec.name} is still answering; wait or press Stop")
         self.publish({"type": "user", "text": text, "context": label})
         self.turn = asyncio.ensure_future(self._run_turn(blocks))
         return {}
@@ -159,6 +179,10 @@ class Conversation:
     async def _run_turn(self, blocks: List[Dict[str, Any]]) -> None:
         try:
             agent = await self.ensure_agent()
+            if self._needs_instructions:
+                self._needs_instructions = False
+                blocks = [{"type": "text", "text": "<panel_instructions>\n" + SYSTEM_PROMPT
+                           + "</panel_instructions>"}] + blocks
             result = await agent.prompt(blocks)
             self.publish({"type": "turn_end", "stopReason": result.get("stopReason")})
         except Exception as e:  # noqa: BLE001
@@ -172,26 +196,31 @@ class Conversation:
         kind = u.get("sessionUpdate")
         content = u.get("content") or {}
         if kind == "available_commands_update":
-            self.panel.hub.set_sticky("commands", {"type": "commands", "commands": [
+            self.panel.hub.set_conv_sticky(self.key, "commands", {"type": "commands", "commands": [
                 {"name": c.get("name"), "description": (c.get("description") or "")[:160],
                  "hint": (c.get("input") or {}).get("hint")}
                 for c in u.get("availableCommands") or []]})
             return
         if kind == "config_option_update":
-            self.panel._publish_agent(u.get("configOptions") or [])
+            self.set_options(u.get("configOptions") or [])
             return
-        if kind == "current_mode_update":  # e.g. Claude left Plan mode by itself
-            mode = u.get("currentModeId")
-            self.panel._publish_agent([dict(o, currentValue=mode) if o.get("id") == "mode" else o
-                                       for o in self.panel._options])
+        if kind == "current_mode_update":  # e.g. the agent left Plan mode by itself
+            mode_ids = {o["id"] for o in picker_options(self.options) if o["kind"] == "mode"}
+            self.set_options([dict(o, currentValue=u.get("currentModeId")) if o.get("id") in mode_ids else o
+                              for o in self.options])
             return
         if kind in ("tool_call", "tool_call_update"):
             tid = u.get("toolCallId")
-            title = u.get("title") or ""
-            if "mcp__iterm__" in title or title == "ToolSearch":  # our tools show as cards
+            if tid not in self._hidden_tool_calls and _is_panel_tool_call(u):
+                # Our tools show as cards. Some agents only reveal that later
+                # (OpenCode wraps MCP calls in an "execute" tool), so take back a
+                # line already shown.
                 self._hidden_tool_calls.add(tid)
+                if tid in self._shown_tool_calls:
+                    self.publish({"type": "tool_hidden", "id": tid})
             if tid in self._hidden_tool_calls:
                 return
+            self._shown_tool_calls.add(tid)
         if kind == "agent_message_chunk" and content.get("type") == "text":
             self.publish({"type": "chunk", "text": content["text"]})
         elif kind == "agent_thought_chunk":
@@ -260,18 +289,19 @@ class Panel:
     """Routes UI requests and agent tool calls to the conversation they belong to."""
 
     def __init__(self, hub: EventHub, terminal: Any, agent_command: List[str],
-                 agent_env: Dict[str, str], settings: Optional[Settings] = None) -> None:
+                 agent_env: Dict[str, str], settings: Optional[Settings] = None,
+                 agents: Optional[List[AgentSpec]] = None) -> None:
         self.hub = hub
         self.settings = settings or Settings()  # in memory unless main passes a file
         self.terminal = terminal
-        self._agent_command = agent_command
-        self._agent_env = agent_env
+        # The agents to offer; Claude Code first. Without a list (tests, dev
+        # server), agent_command is the only agent.
+        self.agents: List[AgentSpec] = agents or [
+            AgentSpec("claude", "Claude Code", agent_command, agent_env, claude=True)]
         self._conversations: Dict[str, Conversation] = {}
         self._ids = itertools.count(1)
         self.mcp = McpServer(self._tools())
         self.mcp_endpoint: Optional[tuple] = None  # (url, token), set once the web server runs
-        self._agent_version = ""
-        self._options: List[Dict[str, Any]] = []  # latest session options, for the pickers
         self._checked_setup = False
         hub.resolve_active = self.active_key
 
@@ -293,8 +323,16 @@ class Panel:
         key = key or self.active_key()
         conv = self._conversations.get(key)
         if conv is None:
-            conv = self._conversations[key] = Conversation(self, key)
+            conv = self._conversations[key] = Conversation(self, key, self.default_agent())
+            self.publish_header(conv)
         return conv
+
+    def agent_spec(self, agent_id: Optional[str]) -> Optional[AgentSpec]:
+        return next((a for a in self.agents if a.id == agent_id), None)
+
+    def default_agent(self) -> AgentSpec:
+        """New conversations use the agent picked last, if it's still available."""
+        return self.agent_spec(self.settings.agent) or self.agents[0]
 
     def _conv(self, body: Dict[str, Any]) -> Conversation:
         """The page says which conversation it shows (from the last "switch" event)."""
@@ -312,10 +350,10 @@ class Panel:
             if key != MAIN and key not in alive:
                 conv = self._conversations.pop(key)
                 await conv.stop()
-                self.hub.clear_history(key)
+                self.hub.drop(key)
         for key in self.hub.conversations():
             if key != MAIN and key not in alive:
-                self.hub.clear_history(key)
+                self.hub.drop(key)
 
     def routes(self) -> Dict[str, Any]:
         return {
@@ -330,6 +368,7 @@ class Panel:
             "/api/open": self.api_open,
             "/api/doctor": self.api_doctor,
             "/api/config": self.api_config,
+            "/api/agent": self.api_agent,
         }
 
     # ---- UI endpoints ----------------------------------------------------
@@ -435,39 +474,56 @@ class Panel:
         return {}
 
     async def api_config(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        """A header picker changed: apply it to every open conversation, and to new ones."""
+        """A header picker changed: apply it to every open conversation with the
+        same agent, and remember it for new ones."""
+        conv = self._conv(body)
         config_id, value = str(body.get("configId", "")), str(body.get("value", ""))
-        option = next((o for o in self._options if o.get("id") == config_id), None)
-        if config_id not in PICKERS or option is None:
+        option = next((o for o in picker_options(conv.options) if o["id"] == config_id), None)
+        if option is None:
             raise ValueError(f"unknown option {config_id!r}")
-        if value in HIDDEN_CHOICES.get(config_id, ()) or value not in _values(option):
+        if value not in [c["value"] for c in option["choices"]]:
             raise ValueError(f"{value!r} isn't a choice for {config_id}")
-        self.settings.set(config_id, value)
-        options = [dict(o, currentValue=value) if o.get("id") == config_id else o for o in self._options]
-        for conv in list(self._conversations.values()):
-            if conv.agent and conv.agent.alive:
+        self.settings.set_option(conv.spec.id, config_id, value)
+        for other in list(self._conversations.values()):
+            if other.spec.id != conv.spec.id:
+                continue
+            if other.agent and other.agent.alive:
                 try:
-                    options = await conv.agent.set_config_option(config_id, value)
+                    other.set_options(await other.agent.set_config_option(config_id, value))
                 except Exception:  # noqa: BLE001 - keep the others in step
-                    log.exception("could not set %s on conversation %s", config_id, conv.key)
-        self._publish_agent(options)
+                    log.exception("could not set %s on conversation %s", config_id, other.key)
+            elif other.options:
+                other.set_options([dict(o, currentValue=value) if o.get("id") == config_id else o
+                                   for o in other.options])
         return {}
 
-    def _publish_agent(self, options: List[Dict[str, Any]]) -> None:
-        """Header line: agent and adapter version, like Intelligent Terminal's pane,
-        plus pickers for the session options in PICKERS."""
-        self._options = options
-        pickers = []
-        for config_id in PICKERS:
-            o = next((x for x in options if x.get("id") == config_id and x.get("type") == "select"), None)
-            if o is None:
-                continue
-            hidden = HIDDEN_CHOICES.get(config_id, set())
-            pickers.append({"id": config_id, "name": o.get("name") or config_id, "current": o.get("currentValue"),
-                            "choices": [{"value": c.get("value"), "name": _choice_label(config_id, c)}
-                                        for c in o.get("options") or [] if c.get("value") not in hidden]})
-        self.hub.set_sticky("agent", {"type": "agent", "name": "Claude Code",
-                                      "version": self._agent_version, "options": pickers})
+    async def api_agent(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """The agent picker changed: start this tab's conversation over with that
+        agent, and use it for new tabs too. Other tabs keep theirs."""
+        conv = self._conv(body)
+        spec = self.agent_spec(str(body.get("agent", "")))
+        if spec is None:
+            raise ValueError("that agent isn't available")
+        self.settings.set_agent(spec.id)
+        if spec.id == conv.spec.id:
+            return {}
+        await conv.stop()
+        conv.spec, conv.version, conv.options = spec, "", []
+        self.hub.clear_history(conv.key)
+        self.hub.set_conv_sticky(conv.key, "commands", {"type": "commands", "commands": []})
+        conv.publish({"type": "reset"})
+        self.publish_header(conv)
+        asyncio.ensure_future(conv.warm_up())
+        return {}
+
+    def publish_header(self, conv: Conversation) -> None:
+        """A conversation's header line: its agent (a picker when there are several),
+        version, and pickers for the session options it offers."""
+        self.hub.set_conv_sticky(conv.key, "agent", {
+            "type": "agent", "id": conv.spec.id, "name": conv.spec.name, "version": conv.version,
+            "agents": [{"id": a.id, "name": a.name} for a in self.agents],
+            "options": [{k: o[k] for k in ("id", "name", "current", "choices")}
+                        for o in picker_options(conv.options)]})
 
     # ---- tools the agent calls (MCP) ------------------------------------------
 
@@ -528,12 +584,37 @@ class Panel:
             await conv.stop()
 
 
-def _choice_label(config_id: str, choice: Dict[str, Any]) -> str:
+def _is_panel_tool_call(u: Dict[str, Any]) -> bool:
+    """A tool call that is (or wraps) one of the panel's own MCP tools."""
+    title = u.get("title") or ""
+    if "mcp__iterm__" in title or title == "ToolSearch":  # Claude Code
+        return True
+    text = " ".join([title, str(u.get("name") or ""), json.dumps(u.get("rawInput") or {})])
+    return any(t in text for t in ("propose_command", "read_terminal"))
+
+
+def picker_options(options: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The session options shown as header pickers: model, mode and effort, in
+    that order, by ACP category (falling back to the option id)."""
+    out = []
+    for kind, categories in PICKERS:
+        o = next((x for x in options if x.get("type") == "select" and x.get("category") in categories), None) \
+            or next((x for x in options if x.get("type") == "select" and x.get("id") in (kind, *categories)), None)
+        if o is None or any(p["id"] == o.get("id") for p in out):
+            continue
+        out.append({"kind": kind, "id": o.get("id"), "name": o.get("name") or kind,
+                    "current": o.get("currentValue"),
+                    "choices": [{"value": c.get("value"), "name": _choice_label(kind, c)}
+                                for c in o.get("options") or [] if c.get("value") not in HIDDEN_CHOICES]})
+    return out
+
+
+def _choice_label(kind: str, choice: Dict[str, Any]) -> str:
     """Short, unambiguous labels side by side in the header: "Default model", "High effort"."""
-    name = (choice.get("name") or choice.get("value") or "").replace(" (recommended)", "")
-    if config_id == "effort":
+    name = (choice.get("name") or str(choice.get("value") or "")).replace(" (recommended)", "")
+    if kind == "effort":
         return f"{name} effort"
-    if config_id == "model" and choice.get("value") == "default":
+    if kind == "model" and choice.get("value") == "default":
         return "Default model"
     return name
 

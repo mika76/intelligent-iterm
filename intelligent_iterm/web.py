@@ -41,6 +41,7 @@ class EventHub:
         self._clients: Dict[asyncio.Queue, Tuple[str, bool]] = {}  # queue -> (conv, pinned)
         self._history: Dict[str, List[Dict[str, Any]]] = {}
         self._sticky: Dict[str, Dict[str, Any]] = {}  # latest event per key, e.g. theme
+        self._conv_sticky: Dict[str, Dict[str, Dict[str, Any]]] = {}  # per conversation: agent header…
         self.active = MAIN  # what followers show
         self.resolve_active: Optional[Callable[[], str]] = None  # set by Panel: the active tab now
         self._holds: Dict[str, asyncio.Event] = {}  # tab -> release of its page's /hold
@@ -54,6 +55,17 @@ class EventHub:
         self._sticky[key] = event
         for q in self._clients:
             q.put_nowait(event)
+
+    def set_conv_sticky(self, conv: str, key: str, event: Dict[str, Any]) -> None:
+        """Latest-value state of one conversation (its agent, options, / commands):
+        replayed after the shared state, survives New chat."""
+        self._conv_sticky.setdefault(conv, {})[key] = event
+        for q, (shown, _pinned) in self._clients.items():
+            if shown == conv:
+                q.put_nowait(event)
+
+    def get_conv_sticky(self, conv: str, key: str) -> Optional[Dict[str, Any]]:
+        return self._conv_sticky.get(conv, {}).get(key)
 
     def publish(self, event: Dict[str, Any], conv: str = MAIN) -> None:
         history = self._history.setdefault(conv, [])
@@ -71,12 +83,17 @@ class EventHub:
     def clear_history(self, conv: str = MAIN) -> None:
         self._history.pop(conv, None)
 
+    def drop(self, conv: str) -> None:
+        """A tab closed: forget its conversation entirely."""
+        self._history.pop(conv, None)
+        self._conv_sticky.pop(conv, None)
+
     def conversations(self) -> List[str]:
-        return list(self._history)
+        return sorted(set(self._history) | set(self._conv_sticky))
 
     def _backlog(self, conv: str) -> List[Dict[str, Any]]:
         return ([{"type": "switch", "conv": conv}] + list(self._sticky.values())
-                + list(self._history.get(conv, [])))
+                + list(self._conv_sticky.get(conv, {}).values()) + list(self._history.get(conv, [])))
 
     def subscribe(self, conv: Optional[str] = None) -> Tuple[asyncio.Queue, List[Dict[str, Any]]]:
         """conv: show that conversation for good; None: follow the active tab."""

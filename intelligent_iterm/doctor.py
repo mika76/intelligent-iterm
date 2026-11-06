@@ -89,6 +89,14 @@ def check_login(claude_json: Path, env: Dict[str, str]) -> Dict[str, str]:
                  "Run `claude` in a terminal and sign in with /login.")
 
 
+def check_agents(names: List[str]) -> Dict[str, str]:
+    others = [n for n in names if n != "Claude Code"]
+    if not others:
+        return check("Other agents", OK, "none found (Gemini CLI, OpenCode and GitHub Copilot are "
+                     "picked up when installed; others can be added in settings.json)")
+    return check("Other agents", OK, ", ".join(others) + " (pick one in the panel header)")
+
+
 def basic_checks(env: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
     """Everything that doesn't need iTerm2."""
     env = dict(os.environ) if env is None else env
@@ -98,7 +106,13 @@ def basic_checks(env: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
         check_adapter(config.ADAPTER),
         check_claude_cli(config.find_claude()),
         check_login(Path(os.path.expanduser("~/.claude.json")), env),
+        check_agents([a.name for a in config.available_agents(_custom_agents())]),
     ]
+
+
+def _custom_agents() -> List[Dict[str, Any]]:
+    from .settings import DEFAULT_PATH, Settings
+    return Settings(DEFAULT_PATH).custom_agents()
 
 
 def check_shell_integration(has_prompts: Optional[bool]) -> Dict[str, str]:

@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import secrets
+import sys
 
 import iterm2
 
@@ -92,8 +93,14 @@ async def main(connection: iterm2.Connection) -> None:
     panel_ref: list = []
     terminal = ItermTerminal(connection, app, lambda f: panel_ref[0].command_failed(f))
 
-    command, env = config.agent_command_and_env()
-    panel = Panel(hub, terminal, command, env, settings=Settings(settings.DEFAULT_PATH))
+    prefs = Settings(settings.DEFAULT_PATH)
+    agents = config.available_agents(prefs.custom_agents())
+    if not agents:  # no node or adapter: the setup checks say how to fix it
+        agents = [config.AgentSpec("claude", "Claude Code", [sys.executable, "-c",
+                  "raise SystemExit('Claude Code adapter not found; run ./install.sh')"], dict(os.environ),
+                  claude=True)]
+    log.info("agents: %s", ", ".join(a.name for a in agents))
+    panel = Panel(hub, terminal, [], {}, settings=prefs, agents=agents)
     panel_ref.append(panel)
 
     routes = panel.routes()

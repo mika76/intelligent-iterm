@@ -74,7 +74,7 @@ class AcpClient:
             },
         )
 
-    async def new_session(self, cwd: str, system_prompt: str, mode: str = "default",
+    async def new_session(self, cwd: str, system_prompt: str, mode: Optional[str] = "default",
                           mcp_servers: Optional[List[Dict[str, Any]]] = None,
                           allowed_tools: Optional[List[str]] = None) -> str:
         params: Dict[str, Any] = {
@@ -93,7 +93,7 @@ class AcpClient:
         self.session_info = result
         self.session_id = result["sessionId"]
         modes = (result.get("modes") or {}).get("availableModes") or []
-        if any(m.get("id") == mode for m in modes):
+        if mode and any(m.get("id") == mode for m in modes):
             await self.request("session/set_mode", {"sessionId": self.session_id, "modeId": mode})
             self.session_info["configOptions"] = [
                 dict(o, currentValue=mode) if o.get("id") == "mode" else o

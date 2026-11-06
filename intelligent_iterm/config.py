@@ -52,3 +52,60 @@ def agent_command_and_env() -> Tuple[List[str], Dict[str, str]]:
     if not ADAPTER.exists():
         raise RuntimeError(f"ACP adapter missing at {ADAPTER}; run ./install.sh")
     return [node, str(ADAPTER)], agent_env(find_claude(), os.path.dirname(node))
+
+
+# ---- agents ------------------------------------------------------------------
+# Claude Code (through the pinned adapter) is the default. Other agents that
+# speak ACP are offered when their CLI is installed; more can be added in the
+# settings file:  {"agents": [{"id": "codex", "name": "Codex",
+#                              "command": ["npx", "@zed-industries/codex-acp"]}]}
+
+class AgentSpec:
+    def __init__(self, id: str, name: str, command: List[str], env: Dict[str, str],
+                 claude: bool = False) -> None:
+        self.id, self.name, self.command, self.env, self.claude = id, name, command, env, claude
+
+    def __repr__(self) -> str:
+        return f"AgentSpec({self.id!r}, {self.command!r})"
+
+
+# (id, name, executable, ACP arguments), checked against each CLI's --help.
+KNOWN_AGENTS = [
+    ("gemini", "Gemini CLI", "gemini", ["--acp"]),
+    ("opencode", "OpenCode", "opencode", ["acp"]),
+    ("copilot", "GitHub Copilot", "copilot", ["--acp"]),
+]
+
+
+def _search_path(node: Optional[str]) -> str:
+    dirs = [os.path.dirname(node)] if node else []
+    dirs += [f"{HOME}/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", f"{HOME}/.opencode/bin"]
+    return os.pathsep.join(dirs + [os.environ.get("PATH", "")])
+
+
+def available_agents(custom: Optional[List[Dict]] = None) -> List[AgentSpec]:
+    """Claude Code first, then installed known agents, then the user's own."""
+    node = find_node()
+    path = _search_path(node)
+    env = dict(os.environ, PATH=path)
+    agents: List[AgentSpec] = []
+    try:
+        command, claude_env = agent_command_and_env()
+        agents.append(AgentSpec("claude", "Claude Code", command, claude_env, claude=True))
+    except RuntimeError:
+        pass  # reported by the setup checks
+    for agent_id, name, exe, args in KNOWN_AGENTS:
+        found = shutil.which(exe, path=path)
+        if found:
+            agents.append(AgentSpec(agent_id, name, [found, *args], env))
+    for entry in custom or []:
+        try:
+            cmd = [str(x) for x in entry["command"]]
+            exe = shutil.which(cmd[0], path=path) or cmd[0]
+            agents = [a for a in agents if a.id != str(entry["id"])]
+            agents.append(AgentSpec(str(entry["id"]), str(entry.get("name") or entry["id"]),
+                                    [exe, *cmd[1:]], dict(env, **{str(k): str(v) for k, v in
+                                                                  (entry.get("env") or {}).items()})))
+        except (KeyError, TypeError, IndexError):
+            continue
+    return agents
