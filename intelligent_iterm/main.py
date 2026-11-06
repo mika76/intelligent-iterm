@@ -84,8 +84,9 @@ async def main(connection: iterm2.Connection) -> None:
     panel_ref.append(panel)
 
     routes = panel.routes()
-    web = WebServer(secrets.token_urlsafe(24), hub, routes)
+    web = WebServer(secrets.token_urlsafe(24), hub, routes, mcp=panel.mcp)
     port = await web.start(int(os.environ.get("INTELLIGENT_ITERM_PORT", "0")))
+    panel.mcp_endpoint = (web.mcp_url, web.token)  # the agent's propose_command / read_terminal tools
     log.info("panel server on 127.0.0.1:%s", port)
 
     # Two ways to show the same panel: the toolbelt (right side) and a

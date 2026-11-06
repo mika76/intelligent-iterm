@@ -28,8 +28,9 @@ class FakeTerminal:
     def get_failure(self, fid):
         return self.failure if fid == "p1" else None
 
-    async def insert(self, text):
+    async def insert(self, text, session_id=None, run=False):
         self.inserted.append(text)
+        self.ran = run
 
 
 async def http(port, method, path, body=None, token=None, host="127.0.0.1"):
@@ -51,8 +52,9 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.hub = EventHub()
         self.term = FakeTerminal()
         self.panel = Panel(self.hub, self.term, FAKE_AGENT, dict(os.environ))
-        self.web = WebServer("secret", self.hub, self.panel.routes())
+        self.web = WebServer("secret", self.hub, self.panel.routes(), mcp=self.panel.mcp)
         self.port = await self.web.start()
+        self.panel.mcp_endpoint = (self.web.mcp_url, "secret")
         self.queue, _ = self.hub.subscribe()
 
     async def asyncTearDown(self):
@@ -66,6 +68,35 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
             seen.append(ev)
             if ev["type"] == kind:
                 return seen
+
+    async def test_propose_command_tool(self):
+        status, _ = await http(self.port, "POST", "/api/send", {"text": "propose a fix"}, token="secret")
+        self.assertEqual(status, 200)
+        prop = (await self.events_until("proposal"))[-1]
+        self.assertEqual((prop["command"], prop["reason"]), ("ls -la", "list files"))
+        status, _ = await http(self.port, "POST", "/api/proposal", {"id": prop["id"], "action": "insert"},
+                               token="secret")
+        self.assertEqual(status, 200)
+        seen = await self.events_until("turn_end")
+        self.assertEqual(self.term.inserted, ["ls -la"])
+        self.assertFalse(self.term.ran)
+        self.assertTrue(any(e["type"] == "proposal_done" and e["outcome"] == "inserted" for e in seen))
+        self.assertIn("inserted the command", "".join(e.get("text", "") for e in seen if e["type"] == "chunk"))
+
+    async def test_mcp_needs_token_and_lists_tools(self):
+        req = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        status, _ = await http(self.port, "POST", "/mcp", req)
+        self.assertEqual(status, 403)
+        status, body = await http(self.port, "POST", "/mcp", req, token="secret")
+        names = [t["name"] for t in json.loads(body)["result"]["tools"]]
+        self.assertEqual(names, ["propose_command", "read_terminal"])
+        status, _ = await http(self.port, "POST", "/mcp",
+                               {"jsonrpc": "2.0", "method": "notifications/initialized"}, token="secret")
+        self.assertEqual(status, 202)
+        status, body = await http(self.port, "POST", "/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                  "params": {"name": "propose_command", "arguments": {"command": "a\nb", "reason": ""}}},
+                                  token="secret")
+        self.assertTrue(json.loads(body)["result"]["isError"])
 
     async def test_page_served_and_token_required(self):
         status, body = await http(self.port, "GET", "/")
@@ -95,11 +126,12 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         await http(self.port, "POST", "/api/explain", {"id": "p1"}, token="secret")
         evs = await self.events_until("turn_end")
         text = "".join(e["text"] for e in evs if e["type"] == "chunk")
-        self.assertIn("Explain why `make` failed (exit 2)", text)
+        self.assertIn("The command in the terminal context failed", text)
+        self.assertIn("untrusted data", text)
         self.assertEqual(evs[0]["type"], "failed_command")
 
     async def test_permission_round_trip(self):
-        await http(self.port, "POST", "/api/send", {"text": "use a tool"}, token="secret")
+        await http(self.port, "POST", "/api/send", {"text": "tool please"}, token="secret")
         evs = await self.events_until("permission")
         await http(self.port, "POST", "/api/permission",
                    {"id": evs[-1]["id"], "optionId": "reject"}, token="secret")

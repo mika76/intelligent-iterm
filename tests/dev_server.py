@@ -20,8 +20,8 @@ from test_bridge import FAKE_AGENT, FakeTerminal  # noqa: E402
 
 
 class PrintingTerminal(FakeTerminal):
-    async def insert(self, text):
-        print("INSERT:", repr(text), flush=True)
+    async def insert(self, text, session_id=None, run=False):
+        print("RUN:" if run else "INSERT:", repr(text), flush=True)
 
 
 async def run():
@@ -32,8 +32,9 @@ async def run():
     else:
         command, env = FAKE_AGENT, dict(os.environ)
     panel = Panel(hub, term, command, env)
-    web = WebServer("dev", hub, panel.routes())
+    web = WebServer("dev", hub, panel.routes(), mcp=panel.mcp)
     await web.start(int(os.environ.get("PORT", "8765")))
+    panel.mcp_endpoint = (web.mcp_url, web.token)
     print("Panel at", web.url, flush=True)
     if "--light" not in sys.argv:  # sample theme: the maintainer's iTerm2 profile
         hub.set_sticky("theme", {"type": "theme", "vars": theme_vars({"bg": "#151a1f", "fg": "#dcdcdc", "dim": "#686868",

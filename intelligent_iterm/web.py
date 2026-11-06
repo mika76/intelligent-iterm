@@ -65,10 +65,11 @@ class EventHub:
 
 
 class WebServer:
-    def __init__(self, token: str, hub: EventHub, routes: Dict[str, Handler]) -> None:
+    def __init__(self, token: str, hub: EventHub, routes: Dict[str, Handler], mcp: Any = None) -> None:
         self.token = token
         self.hub = hub
         self.routes = routes  # path -> async handler(json body) -> json-able result
+        self.mcp = mcp        # McpServer for the agent's tools, served at /mcp
         self.port: Optional[int] = None
         self._server: Optional[asyncio.AbstractServer] = None
 
@@ -85,6 +86,10 @@ class WebServer:
     @property
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/?t={self.token}"
+
+    @property
+    def mcp_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/mcp"
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -111,6 +116,9 @@ class WebServer:
             if method == "GET" and url.path == "/events":
                 return await self._sse(writer)
 
+            if url.path == "/mcp" and self.mcp is not None:
+                return await self._mcp(method, headers, reader, writer)
+
             handler = self.routes.get(url.path)
             if method != "POST" or handler is None:
                 return await self._send(writer, 404, b"not found", "text/plain")
@@ -129,6 +137,22 @@ class WebServer:
                 writer.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    async def _mcp(self, method: str, headers: Dict[str, str], reader: asyncio.StreamReader,
+                   writer: asyncio.StreamWriter) -> None:
+        if method != "POST":  # no server-initiated stream / session deletion
+            return await self._send(writer, 405, b"", "text/plain")
+        length = int(headers.get("content-length") or 0)
+        raw = await reader.readexactly(length) if length else b""
+        try:
+            body = json.loads(raw or b"null")
+        except ValueError:
+            return await self._send_json(writer, 400, {"jsonrpc": "2.0", "id": None,
+                                                       "error": {"code": -32700, "message": "parse error"}})
+        status, response = await self.mcp.handle_http(body)
+        if response is None:
+            return await self._send(writer, status, b"", "text/plain")
+        await self._send_json(writer, status, response)
 
     async def _sse(self, writer: asyncio.StreamWriter) -> None:
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
@@ -154,7 +178,8 @@ class WebServer:
         await self._send(writer, status, json.dumps(obj).encode(), "application/json")
 
     async def _send(self, writer: asyncio.StreamWriter, status: int, body: bytes, ctype: str) -> None:
-        reason = {200: "OK", 403: "Forbidden", 404: "Not Found", 500: "Internal Server Error"}[status]
+        reason = {200: "OK", 202: "Accepted", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+                  405: "Method Not Allowed", 500: "Internal Server Error"}[status]
         writer.write(f"HTTP/1.1 {status} {reason}\r\nContent-Type: {ctype}\r\n"
                      f"Content-Length: {len(body)}\r\nCache-Control: no-store\r\n"
                      f"Connection: close\r\n\r\n".encode() + body)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional
@@ -46,6 +47,10 @@ class ItermTerminal:
             if session is None:
                 session = next((s for s in tab.sessions if not self.is_panel(s.session_id)), None)
         return session
+
+    def active_session_id(self) -> Optional[str]:
+        s = self.active_session()
+        return s.session_id if s else None
 
     def remember_terminal(self, tab_id: str, session_id: str) -> None:
         self._last_in_tab[tab_id] = session_id
@@ -142,6 +147,7 @@ class ItermTerminal:
         session = self.app.get_session_by_id(session_id)
         output = await self._read_range(session, prompt.output_range) if session else ""
         return {"id": f"{session_id}:{prompt.unique_id}", "session_id": session_id,
+                "shell": await self._shell(session) if session else None,
                 "command": prompt.command.strip(), "exit": status,
                 "cwd": prompt.working_directory, "output": output}
 
@@ -167,7 +173,10 @@ class ItermTerminal:
         session = self.active_session()
         if session is None:
             return {}
-        ctx: Dict[str, Any] = {"cwd": await session.async_get_variable("path")}
+        ctx: Dict[str, Any] = {"session_id": session.session_id,
+                               "cwd": await session.async_get_variable("path"),
+                               "shell": await self._shell(session),
+                               "window_title": await session.async_get_variable("name")}
         last = self._last.get(session.session_id) or await self._last_finished_prompt(session)
         if last:
             ctx["last"] = last
@@ -177,6 +186,19 @@ class ItermTerminal:
             contents = await session.async_get_screen_contents()
             ctx["screen"] = _join_lines([contents.line(i) for i in range(contents.number_of_lines)])
         return ctx
+
+    async def _shell(self, session: iterm2.Session) -> Optional[str]:
+        """The pane's shell (zsh, bash, fish…), so suggestions use its syntax."""
+        try:
+            pid = await session.async_get_variable("pid")
+            proc = await asyncio.create_subprocess_exec(
+                "/bin/ps", "-o", "comm=", "-p", str(int(pid)),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), 2)
+            name = os.path.basename(out.decode().strip()).lstrip("-")
+            return name or None
+        except Exception:  # noqa: BLE001 - optional
+            return None
 
     async def _last_finished_prompt(self, session: iterm2.Session) -> Optional[Dict[str, Any]]:
         """For commands that ran before this script started (needs shell integration)."""
@@ -203,17 +225,18 @@ class ItermTerminal:
 
     # ---- typing into the terminal ---------------------------------------------
 
-    async def insert(self, text: str) -> None:
-        """Type `text` at the prompt of the active session. Never sends Enter."""
+    async def insert(self, text: str, session_id: Optional[str] = None, run: bool = False) -> None:
+        """Type `text` at the prompt of `session_id` (default: the active session).
+        Only presses Enter when `run` is set (the user clicked Run on a proposal)."""
         command = text.replace("\t", " ").rstrip()
         if not command.strip():
             raise ValueError("nothing to insert")
         if _CONTROL.search(command):
             raise ValueError("refusing to insert text with newlines or control characters")
-        session = self.active_session()
+        session = (self.app.get_session_by_id(session_id) if session_id else None) or self.active_session()
         if session is None:
             raise RuntimeError("no active terminal session")
-        await session.async_send_text(command, suppress_broadcast=True)
+        await session.async_send_text(command + ("\r" if run else ""), suppress_broadcast=True)
         await session.async_activate()  # focus the terminal so Enter is one keypress away
 
 

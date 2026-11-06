@@ -73,18 +73,22 @@ class AcpClient:
             },
         )
 
-    async def new_session(self, cwd: str, system_prompt: str, mode: str = "default") -> str:
-        result = await self.request(
-            "session/new",
-            {
-                "cwd": cwd,
-                "mcpServers": [],
-                "systemPrompt": {
-                    "mode": "append",
-                    "content": [{"type": "text", "text": system_prompt}],
-                },
+    async def new_session(self, cwd: str, system_prompt: str, mode: str = "default",
+                          mcp_servers: Optional[List[Dict[str, Any]]] = None,
+                          allowed_tools: Optional[List[str]] = None) -> str:
+        params: Dict[str, Any] = {
+            "cwd": cwd,
+            "mcpServers": mcp_servers or [],
+            "systemPrompt": {
+                "mode": "append",
+                "content": [{"type": "text", "text": system_prompt}],
             },
-        )
+        }
+        if allowed_tools:
+            # claude-agent-acp passes these to the Claude Agent SDK: our own panel
+            # tools run without an extra Allow prompt (they ask the user themselves).
+            params["_meta"] = {"claudeCode": {"options": {"allowedTools": allowed_tools}}}
+        result = await self.request("session/new", params)
         self.session_id = result["sessionId"]
         modes = (result.get("modes") or {}).get("availableModes") or []
         if any(m.get("id") == mode for m in modes):
