@@ -5,6 +5,36 @@ import sys
 import urllib.request
 
 MCP = {}
+MARKDOWN = """
+
+## Why it failed
+
+The build uses *Node 18*, but `package.json` asks for **Node ≥ 22** (see [the docs](https://nodejs.org/en/about/previous-releases) or https://example.com/a_b).
+
+### Options
+
+1. Switch with `nvm`:
+   - `nvm install 22`
+   - `nvm use 22`
+2. Or relax the ~~engine~~ check
+   (not recommended)
+
+- [x] read `package.json`
+- [ ] run the build
+
+> Note: _snake_case_names_ stay as-is.
+
+| Tool | Version | Needed |
+|---|:-:|--:|
+| node | 18.19 | 22 |
+| npm | 10.2 | **10** |
+
+---
+
+```bash
+nvm use 22
+```
+"""
 
 
 def mcp_call(method, params):
@@ -61,4 +91,6 @@ for line in sys.stdin:
         if "suggest" in text:
             update("s1", {"sessionUpdate": "agent_message_chunk", "content": {
                 "type": "text", "text": "\n\nTry **this**:\n\n```bash\nls -la\n```\n\nor:\n\n```bash\nfor f in *; do\n  echo $f\ndone\n```\n"}})
+        if asked.startswith("markdown"):
+            update("s1", {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": MARKDOWN}})
         send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})

@@ -110,6 +110,7 @@ class Panel:
             "/api/cancel": self.api_cancel,
             "/api/new": self.api_new,
             "/api/hello": self.api_hello,
+            "/api/open": self.api_open,
         }
 
     # ---- UI endpoints ----------------------------------------------------
@@ -175,6 +176,17 @@ class Panel:
         except Exception as e:  # noqa: BLE001 - shown again on the first message
             log.info("agent warm-up failed: %r", e)
             self.hub.publish({"type": "status", "text": f"Claude Code didn't start: {e}"})
+
+    async def api_open(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """A link in a reply was clicked: open it in the default browser (the
+        docked panel is a browser pane and must stay on its own page)."""
+        url = str(body.get("url", ""))
+        if not re.match(r"https?://", url, re.I) or re.search(r"[\s\x00-\x1f\x7f]", url):
+            raise ValueError("only http(s) links can be opened")
+        proc = await asyncio.create_subprocess_exec(
+            "/usr/bin/open", url, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await proc.wait()
+        return {}
 
     async def api_cancel(self, _body: Dict[str, Any]) -> Dict[str, Any]:
         self._cancel_permissions()

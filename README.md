@@ -194,7 +194,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   still in scrollback. Full-screen apps (vim, less, top) don't produce usable output.
 - **Conversation history** lives in memory. Reloading the panel replays it, but
   restarting the script or iTerm2 clears it. Sessions are not resumed (`session/load`).
-- **Markdown rendering** is minimal: paragraphs, code blocks, `inline code` and **bold**.
+- **Markdown rendering** covers what Claude normally writes (headings, lists, task lists, quotes,
+  tables, links, code, bold/italic/strikethrough) but isn't a full CommonMark parser. Links
+  open in your default browser.
 - **Permission prompts** only offer the options the adapter sends. There is no per-tool
   settings UI. The session runs in Manual mode regardless of your Claude Code default.
 - **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,

@@ -155,6 +155,11 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         await http(self.port, "POST", "/api/insert", {"text": "ls -la"}, token="secret")
         self.assertEqual(self.term.inserted, ["ls -la"])
 
+    async def test_open_link_only_http(self):
+        for url in ["file:///etc/passwd", "javascript:alert(1)", "-a Calculator", "https://x\nrm"]:
+            status, body = await http(self.port, "POST", "/api/open", {"url": url}, token="secret")
+            self.assertFalse(json.loads(body)["ok"], url)
+
 
 if __name__ == "__main__":
     unittest.main()

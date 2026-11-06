@@ -62,12 +62,33 @@
   .msg.user::before { content: "❯ "; color: var(--accent); }
   .msg.user .ctx { display: block; text-indent: 0; color: var(--dim); font-size: var(--small); }
   .msg.agent p { margin: 0 0 6px; }
-  .msg.agent p:last-child { margin-bottom: 0; }
+  .msg.agent > :last-child { margin-bottom: 0; }
   .note { color: var(--dim); font-size: var(--small); }
   .note.error { color: var(--red); }
   .note.tool { padding-left: 1ch; }
   code { font: inherit; color: var(--accent); }
   strong { font-weight: 700; }
+  .msg.agent h1, .msg.agent h2, .msg.agent h3, .msg.agent h4, .msg.agent h5, .msg.agent h6 {
+    font-size: inherit; font-weight: 700; margin: 10px 0 4px; }
+  .msg.agent h1, .msg.agent h2 { color: var(--accent); }
+  .msg.agent h5, .msg.agent h6 { color: var(--dim); }
+  .msg.agent > :first-child { margin-top: 0; }
+  .msg.agent ul, .msg.agent ol { margin: 0 0 6px; padding-left: 2.5ch; }
+  .msg.agent li > ul, .msg.agent li > ol { margin: 0; }
+  .msg.agent ul { list-style: none; }
+  .msg.agent ul > li::before { content: "•"; color: var(--dim); display: inline-block; width: 2ch; margin-left: -2ch; }
+  .msg.agent ul ul > li::before { content: "◦"; }
+  .msg.agent ul > li.task::before { content: none; }
+  .msg.agent li.task .check { color: var(--dim); margin-left: -2ch; }
+  .msg.agent ol > li::marker { color: var(--dim); }
+  .msg.agent blockquote { margin: 0 0 6px; padding-left: 1ch; border-left: 2px solid var(--border); color: var(--dim); }
+  .msg.agent hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+  .msg.agent a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+  .msg.agent em { font-style: italic; }
+  .tablewrap { overflow-x: auto; margin: 0 0 6px; }
+  .msg.agent table { border-collapse: collapse; }
+  .msg.agent th, .msg.agent td { border: 1px solid var(--border); padding: 1px 1ch; text-align: left; vertical-align: top; }
+  .msg.agent th { background: var(--surface); }
   .codeblock { background: var(--surface); border-left: 2px solid var(--accent); margin: 6px 0; }
   .codeblock pre { margin: 0; padding: 6px 8px; overflow-x: auto; font: inherit; }
   .codeblock .bar { display: flex; gap: 6px; justify-content: flex-end; padding: 0 6px 6px; }
@@ -204,16 +225,34 @@ function applyTheme(t) {
 // ---- markdown-ish rendering of agent replies -------------------------------
 const SHELL_LANGS = ["", "bash", "sh", "shell", "zsh", "console", "fish"];
 function renderInline(text, parent) {
-  // `code` and **bold**; everything else as plain text (no HTML injection).
-  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+  // Inline markdown as DOM nodes (never innerHTML): `code`, [links](url), **bold**,
+  // __bold__, *italic*, _italic_, ~~strike~~ and bare URLs.
+  const re = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(?!\s)([^*\n]+?)\*|(?<![\w])_(?!\s)([^_\n]+?)_(?![\w])|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"*_])/g;
   let last = 0, m;
   while ((m = re.exec(text))) {
     if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
-    const tok = m[0];
-    parent.appendChild(tok[0] === "`" ? el("code", "", tok.slice(1, -1)) : el("strong", "", tok.slice(2, -2)));
-    last = m.index + tok.length;
+    if (m[1]) parent.appendChild(el("code", "", m[2].trim()));
+    else if (m[3]) parent.appendChild(link(m[4], m[3]));
+    else if (m[5] || m[6]) renderInline(m[5] || m[6], parent.appendChild(el("strong")));
+    else if (m[7]) renderInline(m[7], parent.appendChild(el("s")));
+    else if (m[8] || m[9]) renderInline(m[8] || m[9], parent.appendChild(el("em")));
+    else parent.appendChild(link(m[10]));
+    last = m.index + m[0].length;
   }
   if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+function link(url, label) {
+  // Links open in the default browser (the panel itself must stay on its page).
+  if (!/^https?:\/\//i.test(url)) {
+    const span = el("span");
+    renderInline(label || url, span);
+    return span;
+  }
+  const a = el("a");
+  a.href = url; a.title = url;
+  if (label) renderInline(label, a); else a.textContent = url;
+  a.onclick = (e) => { e.preventDefault(); api("/api/open", { url }); };
+  return a;
 }
 function codeBlock(lang, code, done) {
   const box = el("div", "codeblock");
@@ -243,7 +282,7 @@ function codeBlock(lang, code, done) {
 }
 function renderMarkdown(src, container) {
   container.replaceChildren();
-  const parts = src.split(/^```/m);
+  const parts = src.split(/^[ \t]*```/m);
   parts.forEach((part, i) => {
     if (i % 2 === 1) { // inside a fence: first line is the language
       const nl = part.indexOf("\n");
@@ -251,17 +290,103 @@ function renderMarkdown(src, container) {
       const code = nl === -1 ? "" : part.slice(nl + 1);
       container.appendChild(codeBlock(lang, code, i < parts.length - 1));
     } else {
-      part.split(/\n{2,}/).forEach((para) => {
-        if (!para.trim()) return;
-        const p = el("p");
-        para.replace(/^\n+|\n+$/g, "").split("\n").forEach((line, j) => {
-          if (j) p.appendChild(el("br"));
-          renderInline(line, p);
-        });
-        container.appendChild(p);
-      });
+      renderBlocks(part.split("\n"), container);
     }
   });
+}
+
+const LIST_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+function renderBlocks(lines, container) {
+  let para = null;
+  const endPara = () => { para = null; };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m;
+    if (!line.trim()) { endPara(); continue; }
+    if ((m = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/))) {
+      endPara();
+      renderInline(m[2], container.appendChild(el("h" + m[1].length)));
+    } else if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      endPara();
+      container.appendChild(el("hr"));
+    } else if (/^\s{0,3}>/.test(line)) {
+      endPara();
+      const quoted = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) quoted.push(lines[i++].replace(/^\s{0,3}>\s?/, ""));
+      i--;
+      renderBlocks(quoted, container.appendChild(el("blockquote")));
+    } else if (LIST_ITEM.test(line)) {
+      endPara();
+      i = renderList(lines, i, container) - 1;
+    } else if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
+      endPara();
+      i = renderTable(lines, i, container) - 1;
+    } else {
+      if (para) para.appendChild(el("br"));
+      else para = container.appendChild(el("p"));
+      renderInline(line.trim(), para);
+    }
+  }
+}
+function renderList(lines, i, container) {
+  // Nested lists by indentation; returns the index of the first line after the list.
+  const stack = []; // {indent, list}
+  let li = null;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    const m = line.match(LIST_ITEM);
+    if (!line.trim()) {
+      const next = lines.slice(i + 1).find((l) => l.trim());
+      if (next && (LIST_ITEM.test(next) || /^\s{2,}/.test(next))) continue;
+      break;
+    }
+    if (!m) {
+      if (li && /^\s+/.test(line)) { li.appendChild(el("br")); renderInline(line.trim(), li); continue; }
+      if (li && !/^\s{0,3}(#|>|```)/.test(line)) { li.appendChild(el("br")); renderInline(line.trim(), li); continue; }
+      break;
+    }
+    const indent = m[1].replace(/\t/g, "    ").length;
+    const ordered = /\d/.test(m[2]);
+    while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+    let top = stack[stack.length - 1];
+    if (!top || indent > top.indent || top.ordered !== ordered) {
+      if (top && indent === top.indent) stack.pop(); // same level, different kind
+      const list = el(ordered ? "ol" : "ul");
+      if (ordered && parseInt(m[2], 10) !== 1) list.start = parseInt(m[2], 10);
+      const parent = stack.length && li ? li : container;
+      parent.appendChild(list);
+      top = { indent, ordered, list };
+      stack.push(top);
+    }
+    li = top.list.appendChild(el("li"));
+    const task = m[3].match(/^\[([ xX])\]\s+(.*)$/);
+    if (task) {
+      li.className = "task";
+      li.appendChild(el("span", "check", task[1] === " " ? "☐ " : "☑ "));
+      renderInline(task[2], li);
+    } else {
+      renderInline(m[3], li);
+    }
+  }
+  return i;
+}
+function renderTable(lines, i, container) {
+  const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  const align = cells(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-:$/.test(c) ? "right" : ""));
+  const wrap = container.appendChild(el("div", "tablewrap"));
+  const table = wrap.appendChild(el("table"));
+  const addRow = (row, tag) => {
+    const tr = table.appendChild(el("tr"));
+    cells(row).forEach((c, k) => {
+      const td = tr.appendChild(el(tag));
+      if (align[k]) td.style.textAlign = align[k];
+      renderInline(c, td);
+    });
+  };
+  addRow(lines[i], "th");
+  for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) addRow(lines[i], "td");
+  return i;
 }
 
 // ---- failed-command status bar -------------------------------------------------
