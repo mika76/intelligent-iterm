@@ -142,11 +142,26 @@ async def main(connection):
         check("restored panel replaced", replaced == 1 and app.get_session_by_id(stale.session_id) is None
               and fresh_url == dock.url, (replaced, fresh_url))
         await dock.toggle(shell)
+
+        # Typing `exit` in the terminal closes the panel too, and so the window.
+        await dock.toggle(shell)
+        await asyncio.sleep(1.0)
+        panel_id = dock._panels.get(tab.tab_id)
+        await shell.async_send_text("\x15exit\n")
+        for _ in range(20):
+            if app.get_session_by_id(panel_id) is None:
+                break
+            await asyncio.sleep(0.25)
+        check("exit in terminal closes the panel",
+              app.get_session_by_id(panel_id) is None and tab.tab_id not in dock._panels)
     finally:
         focus_task.cancel()
         closed_task.cancel()
-        await shell.async_send_text("\x15")
-        await window.async_close(force=True)
+        try:
+            await shell.async_send_text("\x15")
+            await window.async_close(force=True)
+        except Exception:  # noqa: BLE001 - already closed by the exit check
+            pass
         await panel.shutdown()
         await web.stop()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")

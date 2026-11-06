@@ -140,17 +140,36 @@ class Dock:
         await component.async_register(self.connection, claude_panel_button, onclick=onclick)
 
     async def watch_closed_panels(self) -> None:
-        """Forget panels the user closed themselves (pane ✕), and fix the button label."""
+        """Forget panels the user closed themselves (pane ✕) and fix the button
+        label; close a panel once the last terminal in its tab has exited, so
+        `exit` closes the tab as it would without the panel."""
         async with iterm2.SessionTerminationMonitor(self.connection) as mon:
             while True:
                 gone = await mon.async_get()
                 log.debug("session ended: %s", gone)
-                for tab_id, panel_id in list(self._panels.items()):
-                    if panel_id == gone:
-                        del self._panels[tab_id]
-                        tab = self.app.get_tab_by_id(tab_id)
-                        for s in (tab.sessions if tab else []):
-                            await _set_state(s, "closed")
+                try:
+                    await self._session_ended(gone)
+                except Exception:  # noqa: BLE001 - keep watching
+                    log.exception("handling ended session failed")
+
+    async def _session_ended(self, gone: str) -> None:
+        for tab_id, panel_id in list(self._panels.items()):
+            tab = self.app.get_tab_by_id(tab_id)
+            if panel_id == gone:
+                del self._panels[tab_id]
+                for s in (tab.sessions if tab else []):
+                    await _set_state(s, "closed")
+            elif tab is None:
+                del self._panels[tab_id]  # whole tab closed
+            elif not any(s.session_id != gone and not self.is_panel(s.session_id)
+                         for s in tab.sessions):
+                del self._panels[tab_id]
+                panel = self.app.get_session_by_id(panel_id)
+                if panel is not None:
+                    try:
+                        await panel.async_close(force=True)
+                    except Exception:  # noqa: BLE001 - already closing
+                        log.info("could not close orphaned panel", exc_info=True)
 
     async def watch_hotkey(self) -> None:
         """Ctrl+Shift+. in any terminal session toggles the dock for that tab."""
