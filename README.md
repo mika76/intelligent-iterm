@@ -5,7 +5,7 @@
 **A Claude Code side panel for iTerm2.** It sees your terminal, explains failed commands,
 and proposes fixes you can insert or run with one click.
 
-![iTerm2 with the Claude panel docked below the terminal, explaining a failed npm build and proposing a fix](docs/iterm.png)
+![Demo: npm run build fails, Explain diagnoses the missing script, and Run executes the proposed npm run compile](docs/demo.gif)
 
 Inspired by Microsoft's [Intelligent Terminal](https://github.com/microsoft/intelligent-terminal),
 built for iTerm2 on macOS. It runs as an iTerm2 Python API script and talks to Claude Code
@@ -48,7 +48,7 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
 
 ## Features
 
-![Close-up of the panel: an explanation of a failed build and a proposed command card with Insert, Run and Dismiss](docs/screenshot.png)
+![iTerm2 with the Claude panel docked below the terminal, explaining a failed npm build and proposing a fix](docs/iterm.png)
 
 1. **Chat panel** with streamed replies, in either of two places:
    - **Docked below the terminal** (like Intelligent Terminal's agent pane). Open or close
