@@ -61,6 +61,9 @@ async def main(connection):
         check("panel is a split in the same tab", panel_session is not None and len(tab.sessions) == 2)
         props = (await panel_session.async_get_profile()).all_properties
         check("panel is a browser session", props.get("Custom Command") == "Browser", props.get("Custom Command"))
+        shell_props = (await shell.async_get_profile()).all_properties
+        check("panel has the terminal's background color",
+              props.get("Background Color") == shell_props.get("Background Color"))
 
         connected = False
         for _ in range(60):  # the page opens /events once it has loaded
