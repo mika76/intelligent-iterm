@@ -1,6 +1,6 @@
 {
   "name": "intelligent-iterm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Pins the Claude Code ACP adapter used by the iTerm2 side panel",
   "license": "MIT",
