@@ -1,21 +1,52 @@
-# intelligent-iterm
+# Intelligent iTerm
 
-A Claude side panel for iTerm2: a toolbelt pane that can see your terminal,
-explain failed commands, and suggest commands you can insert at the prompt.
-Inspired by Microsoft's Intelligent Terminal. MVP quality.
+**A Claude Code side panel for iTerm2.** It sees your terminal, explains failed commands,
+and proposes fixes you can insert or run with one click.
+
+![iTerm2 with the Claude panel docked below the terminal, explaining a failed npm build and proposing a fix](docs/iterm.png)
+
+Inspired by Microsoft's [Intelligent Terminal](https://github.com/microsoft/intelligent-terminal),
+built for iTerm2 on macOS. It runs as an iTerm2 Python API script and talks to Claude Code
+through the [Agent Client Protocol](https://agentclientprotocol.com), using your existing
+Claude Code login. No API keys are stored.
+
+> **Status: 0.1, an early release.** Tested on iTerm2 3.7.7 only. Expect rough edges, and
+> see [Known limitations](#known-limitations).
+
+## Quick start
+
+1. In iTerm2, enable **Settings > General > Magic > Enable Python API**, install
+   **Scripts > Manage > Install Python Runtime**, and install shell integration
+   (**iTerm2 > Install Shell Integration**).
+2. Make sure Node.js ≥ 22 and [Claude Code](https://docs.claude.com/en/docs/claude-code)
+   are installed, and that you've logged in to Claude Code once.
+3. Clone and install:
+
+   ```bash
+   git clone https://github.com/mika76/intelligent-iterm.git && cd intelligent-iterm && ./install.sh
+   ```
+
+4. In iTerm2, run **Scripts > AutoLaunch > intelligent_iterm_panel.py**, then press
+   **Ctrl+Shift+.** in any tab to open the panel below the terminal.
+
+Details are under [Requirements](#requirements) and [Install](#install).
+
+## How it works
 
 ```
-iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTerm2 API script)
-                                           │  reads sessions, watches prompts, types text
-                                           └─stdio JSON-RPC (ACP)─▶ claude-agent-acp ─▶ Claude Code
+iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTerm2 API script)
+                                                 │  reads sessions, watches prompts, types text
+                                                 └─stdio JSON-RPC (ACP)─▶ claude-agent-acp ─▶ Claude Code
 ```
 
 - **Agent:** Claude Code via [`@agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp)
   (the renamed successor of `@zed-industries/claude-code-acp`), pinned in `package.json`.
-  It uses your existing Claude Code login. No keys are stored here.
-- **Script:** stdlib + the `iterm2` package only, so it runs on iTerm2's basic Python runtime.
+- **Script:** standard library plus the `iterm2` package only, so it runs on iTerm2's basic
+  Python runtime. The chat UI is a single HTML file with no build step.
 
 ## Features
+
+![Close-up of the panel: an explanation of a failed build and a proposed command card with Insert, Run and Dismiss](docs/screenshot.png)
 
 1. **Chat panel** with streamed replies, in either of two places:
    - **Docked below the terminal** (like Intelligent Terminal's agent pane). Open or close
@@ -202,3 +233,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,
   MCP servers), so the first turn has a sizeable cached prompt.
 - **Multiple iTerm2 windows** share one panel conversation.
+
+## License
+
+[MIT](LICENSE). The agent prompts are adapted from Microsoft Intelligent Terminal (MIT);
+its notice is included in the license file.
