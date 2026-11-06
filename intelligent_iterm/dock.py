@@ -27,22 +27,31 @@ log = logging.getLogger(__name__)
 STATE_VAR = "user.claude_panel"  # per terminal session: "open" / "closed"
 MAXIMIZE_PANE = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
 
-# iTerm2 shows a URL/navigation bar on browser panes. There's no profile key or
-# API for it, only the Web > Show Toolbar menu item (which acts on the focused
-# browser pane), so we press it via System Events. Needs Accessibility
-# permission for iTerm2; if that's missing the bar simply stays.
+# iTerm2 shows a URL/navigation bar on browser panes. Newer iTerm2 builds have a
+# session function for it, which works before the pane is even drawn, so the bar
+# never appears. Older ones only have Web > Show Toolbar (acting on the focused
+# browser pane), which we press via System Events; that needs Accessibility
+# permission for iTerm2, and without it the bar simply stays.
+HIDE_TOOLBAR_FUNCTION = "iterm2.browser_set_toolbar_hidden(hidden: true)"
+# Started before the split so osascript's own startup overlaps it: waits for a
+# browser pane to have focus (the item is disabled for terminals), then presses
+# it. (Its checkmark can lag behind the pane by a second, so it isn't consulted.)
 HIDE_TOOLBAR_SCRIPT = """
 tell application "System Events"
   tell process "iTerm2"
     if frontmost is false then return "background"
     set mi to menu item "Show Toolbar" of menu "Web" of menu bar 1
-    if enabled of mi is false then return "disabled"
-    click mi
-    return "hidden"
+    repeat 80 times
+      if enabled of mi then
+        click mi
+        return "hidden"
+      end if
+      delay 0.025
+    end repeat
+    return "disabled"
   end tell
 end tell
 """
-
 
 class Dock:
     def __init__(self, connection: iterm2.Connection, app: iterm2.App,
@@ -52,6 +61,7 @@ class Dock:
         self.terminal = terminal
         self.url = url + "&dock=1"
         self._panels: Dict[str, str] = {}  # tab_id -> panel session_id
+        self._toolbar_function: Optional[bool] = None  # iTerm2 has HIDE_TOOLBAR_FUNCTION?
         terminal.is_panel = self.is_panel
 
     def url_for(self, tab_id: str) -> str:
@@ -88,15 +98,25 @@ class Dock:
         profile = iterm2.LocalWriteOnlyProfile()
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
         profile._simple_set("Initial URL", self.url_for(tab.tab_id))  # pylint: disable=protected-access
+        keep_toolbar = os.environ.get("INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR") == "1"
+        menu_click = None
+        if not keep_toolbar and not self._toolbar_function:
+            menu_click = asyncio.ensure_future(hide_browser_toolbar())
         panel = await session.async_split_pane(vertical=False, profile_customizations=profile)
         self._panels[tab.tab_id] = panel.session_id
-        # A browser pane starts black and ignores colors passed with the split;
-        # with the Minimal theme the window's title and tab bar follow the
-        # focused pane, so the whole window flashed. Give it the terminal's colors.
-        try:
-            await panel.async_set_profile_properties(colors)
-        except Exception:  # noqa: BLE001 - cosmetic
-            log.info("could not copy terminal colors", exc_info=True)
+        # Both right away and together: the pane's URL bar and its black
+        # background both show for as long as these take.
+        hide = (_hide_toolbar_by_function(panel)
+                if not keep_toolbar and self._toolbar_function is not False else _none())
+        hidden, _ = await asyncio.gather(hide, _set_colors(panel, colors))
+        if hidden is not None:
+            self._toolbar_function = hidden
+        if hidden and menu_click is not None:
+            # First open only (we didn't know yet). If the click got in first it
+            # toggled the bar back on; the function call is idempotent.
+            menu_click.cancel()
+            await asyncio.gather(menu_click, return_exceptions=True)
+            await _hide_toolbar_by_function(panel)
         # The new pane's focus event can arrive before we knew it was a panel.
         self.terminal.remember_terminal(tab.tab_id, session.session_id)
         await _set_state(session, "open")
@@ -106,10 +126,8 @@ class Dock:
             # few points each time; put the original size back.
             await asyncio.sleep(0.15)
             await window.async_set_frame(frame)
-
-        if os.environ.get("INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR") != "1":
-            await asyncio.sleep(0.4)  # let the new pane take focus
-            await hide_browser_toolbar()
+        if menu_click is not None and not menu_click.cancelled():
+            await menu_click
         return {"state": "open"}
 
     async def replace_restored_panels(self, windows=None) -> int:
@@ -213,18 +231,50 @@ class Dock:
                         log.exception("dock toggle failed")
 
 
+async def _hide_toolbar_by_function(panel: iterm2.Session) -> Optional[bool]:
+    """Hide the pane's URL bar with iTerm2's session function. False if this
+    iTerm2 doesn't have it; None if it failed for another reason."""
+    try:
+        await panel.async_invoke_function(HIDE_TOOLBAR_FUNCTION)
+        log.info("hide browser toolbar: hidden by function")
+        return True
+    except Exception as e:  # noqa: BLE001 - fall back to the menu
+        log.info("hide browser toolbar: function failed (%s), using the menu", e)
+        return False if "No function registered" in str(e) else None
+
+
 async def hide_browser_toolbar() -> str:
-    """Press Web > Show Toolbar for the focused browser pane. Returns what happened."""
+    """Press Web > Show Toolbar once a browser pane has focus, if its bar is
+    showing. Returns what happened."""
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "/usr/bin/osascript", "-e", HIDE_TOOLBAR_SCRIPT,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), 5)
         result = out.decode().strip() or err.decode().strip()
+    except asyncio.CancelledError:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+        raise
     except Exception as e:  # noqa: BLE001 - cosmetic
         result = f"failed: {e}"
     log.info("hide browser toolbar: %s", result)
     return result
+
+
+async def _none() -> None:
+    return None
+
+
+async def _set_colors(panel: iterm2.Session, colors: iterm2.LocalWriteOnlyProfile) -> None:
+    """A browser pane starts black and ignores colors passed with the split;
+    with the Minimal theme the window's title and tab bar follow the focused
+    pane, so the whole window flashed. Give it the terminal's colors."""
+    try:
+        await panel.async_set_profile_properties(colors)
+    except Exception:  # noqa: BLE001 - cosmetic
+        log.info("could not copy terminal colors", exc_info=True)
 
 
 async def _color_properties(session: iterm2.Session) -> iterm2.LocalWriteOnlyProfile:

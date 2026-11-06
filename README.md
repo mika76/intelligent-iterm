@@ -57,8 +57,9 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
      Settings > Profiles > Session > *Configure Status Bar* and drag in **Claude panel**.
      It only appears in the picker while the script is running. It's an iTerm2 browser split pane, created with per-session settings,
      so no profile is added to your iTerm2 config. The script hides the pane's browser
-     URL bar by pressing **Web > Show Toolbar** through macOS accessibility. iTerm2 has no
-     setting or API for this. The first time, macOS may ask to let iTerm2 control
+     URL bar. iTerm2 builds newer than 3.7.7 can do this through the API before the pane is
+     drawn, so the bar never shows. On 3.7.7 and older, the script presses **Web > Show Toolbar**
+     through macOS accessibility as soon as the pane has focus. The first time, macOS may ask to let iTerm2 control
      System Events and use Accessibility. If you decline, the URL bar stays; you can hide it
      yourself with Web > Show Toolbar, or set `INTELLIGENT_ITERM_KEEP_BROWSER_TOOLBAR=1`
      to skip the step.
@@ -216,7 +217,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **Docking:** the toolbelt only goes on the right. The bottom dock splits the *active pane*,
   not the whole tab, because the API can't split a tab's root. With several panes in a tab
   it sits under the one you were in. The pane is created the first time you open it in a
-  tab, which shows a moment of blank pane and URL bar; after that, hiding it maximizes the
+  tab, which shows a moment of blank pane (and, on iTerm2 3.7.7 and older, the URL bar); after that, hiding it maximizes the
   terminal pane (View > Maximize Active Pane) so the panel stays loaded and reappears
   instantly. Typing `exit` in the terminal closes the panel with it. Because the tab has
   two panes, iTerm2 asks before closing it with ⌘W. It opens at iTerm2's default split (about half),
