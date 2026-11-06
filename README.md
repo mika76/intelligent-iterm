@@ -1,5 +1,7 @@
 # Intelligent iTerm
 
+[![tests](https://github.com/mika76/intelligent-iterm/actions/workflows/tests.yml/badge.svg)](https://github.com/mika76/intelligent-iterm/actions/workflows/tests.yml)
+
 **A Claude Code side panel for iTerm2.** It sees your terminal, explains failed commands,
 and proposes fixes you can insert or run with one click.
 
