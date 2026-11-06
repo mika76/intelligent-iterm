@@ -44,7 +44,9 @@ When running a command in the user's terminal is the outcome they want, call
 `propose_command` with one single-line command and a short reason. The user
 inserts it at their prompt, runs it, or dismisses it in the panel, and the tool
 returns their choice. Propose at most one command per turn; when it returns, end
-the turn with at most one short sentence. Don't repeat the command in a code block.
+the turn with at most one short sentence. You don't see the command's output, so
+don't describe it; call `read_terminal` if you need it. Don't repeat the command
+in a code block.
 
 - Use the pane's shell syntax and treat cwd as authoritative.
 - Your own tools (Bash etc.) run in a separate process, not in the user's
@@ -95,6 +97,8 @@ class Panel:
         self._target_session: Optional[str] = None  # where proposals go (Explain: the failing pane)
         self.mcp = McpServer(self._tools())
         self.mcp_endpoint: Optional[tuple] = None  # (url, token), set once the web server runs
+        self._hidden_tool_calls: set = set()  # our own propose/read calls: shown as cards instead
+        self._agent_version = ""
 
     def routes(self) -> Dict[str, Any]:
         return {
@@ -105,6 +109,7 @@ class Panel:
             "/api/permission": self.api_permission,
             "/api/cancel": self.api_cancel,
             "/api/new": self.api_new,
+            "/api/hello": self.api_hello,
         }
 
     # ---- UI endpoints ----------------------------------------------------
@@ -158,6 +163,19 @@ class Panel:
             p["future"].set_result("dismissed")
         return {}
 
+    async def api_hello(self, _body: Dict[str, Any]) -> Dict[str, Any]:
+        """The page loaded: start Claude Code now so its model and / commands show up."""
+        if self._agent is None:
+            asyncio.ensure_future(self._warm_up())
+        return {}
+
+    async def _warm_up(self) -> None:
+        try:
+            await self._ensure_agent()
+        except Exception as e:  # noqa: BLE001 - shown again on the first message
+            log.info("agent warm-up failed: %r", e)
+            self.hub.publish({"type": "status", "text": f"Claude Code didn't start: {e}"})
+
     async def api_cancel(self, _body: Dict[str, Any]) -> Dict[str, Any]:
         self._cancel_permissions()
         if self._agent and self._turn and not self._turn.done():
@@ -183,7 +201,8 @@ class Panel:
             self.hub.publish({"type": "status", "text": "Starting Claude Code…"})
             agent = AcpClient(self._agent_command, self._agent_env,
                               self._on_update, self._on_permission)
-            await agent.start()
+            init = await agent.start()
+            self._agent_version = (init.get("agentInfo") or {}).get("version") or ""
             ctx = await self.terminal.get_context(include_screen=False)
             cwd = ctx.get("cwd") if ctx.get("cwd") and os.path.isdir(ctx["cwd"]) else os.path.expanduser("~")
             servers, allowed = [], None
@@ -193,6 +212,7 @@ class Panel:
                             "headers": [{"name": "X-Token", "value": token}]}]
                 allowed = self.mcp.allowed_tool_names()
             await agent.new_session(cwd, SYSTEM_PROMPT, mcp_servers=servers, allowed_tools=allowed)
+            self._publish_agent(agent.session_info.get("configOptions") or [])
             self.hub.publish({"type": "status", "text": f"Session started in {cwd}"})
             self._agent = agent
             return agent
@@ -217,9 +237,35 @@ class Panel:
         finally:
             self._cancel_permissions()
 
+    def _publish_agent(self, options: List[Dict[str, Any]]) -> None:
+        """Header line: agent, adapter version and model, like Intelligent Terminal's pane."""
+        model = None
+        for o in options:
+            if o.get("id") == "model":
+                current = next((x for x in o.get("options") or [] if x.get("value") == o.get("currentValue")), {})
+                model = (current.get("name") or o.get("currentValue") or "").replace(" (recommended)", "")
+        self.hub.set_sticky("agent", {"type": "agent", "name": "Claude Code",
+                                      "version": self._agent_version, "model": model})
+
     async def _on_update(self, u: Dict[str, Any]) -> None:
         kind = u.get("sessionUpdate")
         content = u.get("content") or {}
+        if kind == "available_commands_update":
+            self.hub.set_sticky("commands", {"type": "commands", "commands": [
+                {"name": c.get("name"), "description": (c.get("description") or "")[:160],
+                 "hint": (c.get("input") or {}).get("hint")}
+                for c in u.get("availableCommands") or []]})
+            return
+        if kind == "config_option_update":
+            self._publish_agent(u.get("configOptions") or [])
+            return
+        if kind in ("tool_call", "tool_call_update"):
+            tid = u.get("toolCallId")
+            title = u.get("title") or ""
+            if "mcp__iterm__" in title or title == "ToolSearch":  # our tools show as cards
+                self._hidden_tool_calls.add(tid)
+            if tid in self._hidden_tool_calls:
+                return
         if kind == "agent_message_chunk" and content.get("type") == "text":
             self.hub.publish({"type": "chunk", "text": content["text"]})
         elif kind == "agent_thought_chunk":

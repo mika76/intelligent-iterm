@@ -47,6 +47,7 @@ class AcpClient:
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         self.session_id: Optional[str] = None
+        self.session_info: Dict[str, Any] = {}
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -89,6 +90,7 @@ class AcpClient:
             # tools run without an extra Allow prompt (they ask the user themselves).
             params["_meta"] = {"claudeCode": {"options": {"allowedTools": allowed_tools}}}
         result = await self.request("session/new", params)
+        self.session_info = result
         self.session_id = result["sessionId"]
         modes = (result.get("modes") or {}).get("availableModes") or []
         if any(m.get("id") == mode for m in modes):

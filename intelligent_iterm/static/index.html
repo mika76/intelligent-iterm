@@ -48,8 +48,9 @@
     display: flex; align-items: center; gap: 8px; padding: 4px 10px;
     border-bottom: 1px solid var(--border); font-size: var(--small); color: var(--dim);
   }
-  header .title { color: var(--fg); }
+  header .title { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header .title::before { content: "✳ "; color: var(--accent); }
+  header .title .meta { color: var(--dim); }
   header .status { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   header label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
   header input { accent-color: var(--accent); margin: 0; }
@@ -86,14 +87,31 @@
   #failbar .x { color: var(--red); }
   #failbar .cmd { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-  /* Prompt-style input */
-  footer { border-top: 1px solid var(--border); padding: 6px 10px 6px; }
-  .prompt { display: flex; gap: 1ch; align-items: flex-end; }
+  /* Proposed command (propose_command tool): the user inserts, runs or dismisses it */
+  .proposal { border: 1px solid var(--border); border-left: 2px solid var(--accent); padding: 6px 8px; }
+  .proposal .reason { color: var(--dim); font-size: var(--small); margin-bottom: 4px; }
+  .proposal pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .proposal pre::before { content: "$ "; color: var(--dim); }
+  .proposal .row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+  .proposal .outcome { color: var(--dim); font-size: var(--small); }
+
+  /* Input box, like Intelligent Terminal's agent pane */
+  footer { padding: 6px 10px 8px; position: relative; }
+  .prompt { display: flex; gap: 1ch; align-items: flex-end; border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 8px; }
+  .prompt:focus-within { border-color: var(--accent); }
+  #slash { display: none; position: absolute; left: 10px; right: 10px; bottom: 100%;
+    max-height: 14em; overflow-y: auto; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; font-size: var(--small); }
+  #slash.show { display: block; }
+  #slash div { padding: 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  #slash div .d { color: var(--dim); margin-left: 1ch; }
+  #slash div.sel { background: var(--surface); color: var(--accent); }
   .prompt .glyph { align-self: flex-start; }
   .prompt .glyph { color: var(--accent); line-height: 1.4; }
   textarea {
     flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--fg);
-    font: inherit; line-height: 1.4; padding: 0; min-height: 2.8em; max-height: 10em;
+    font: inherit; line-height: 1.4; padding: 0; min-height: 1.4em; max-height: 10em;
     caret-color: var(--cursor, var(--fg));
   }
   textarea::placeholder { color: var(--dim); }
@@ -101,7 +119,7 @@
 </head>
 <body>
 <header>
-  <span class="title">Claude Code</span>
+  <span class="title" id="agentline">Claude Code</span>
   <span class="status" id="status">connecting…</span>
   <label title="Send the active session's directory, last command, exit status and output">
     <input type="checkbox" id="attach"> context</label>
@@ -118,9 +136,10 @@
   <button id="failclose" class="link" title="Dismiss">✕</button>
 </div>
 <footer>
+  <div id="slash"></div>
   <div class="prompt">
     <span class="glyph">❯</span>
-    <textarea id="input" placeholder="Ask about your terminal…"></textarea>
+    <textarea id="input" rows="1" placeholder="Ask anything, / for commands…"></textarea>
     <button id="send" class="primary" title="Send (⏎)">Send</button>
   </div>
 </footer>
@@ -129,6 +148,7 @@
 const token = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
 const log = $("log"), input = $("input"), sendBtn = $("send");
+let agentCommands = [];
 let busy = false, agentEl = null, agentText = "", thinkingEl = null, lastFailure = null;
 
 // ---- small helpers -------------------------------------------------------
@@ -309,6 +329,36 @@ function handle(ev) {
     }
     case "failed_command":
       showFailure(ev); break;
+    case "proposal": {
+      const card = add(el("div", "proposal"));
+      card.id = "prop-" + ev.id;
+      if (ev.reason) card.appendChild(el("div", "reason", ev.reason));
+      card.appendChild(el("pre", "", ev.command));
+      const row = card.appendChild(el("div", "row"));
+      [["insert", "Insert ⇥", "primary", "Type it at your prompt without running it"],
+       ["run", "Run ⏎", "", "Type it and press Enter in your terminal"],
+       ["dismiss", "Dismiss", "link", ""]].forEach(([action, label, cls, title]) => {
+        const b = el("button", cls, label);
+        b.title = title;
+        b.onclick = () => api("/api/proposal", { id: ev.id, action });
+        row.appendChild(b);
+      });
+      break;
+    }
+    case "proposal_done": {
+      const card = $("prop-" + ev.id);
+      if (!card) break;
+      const row = card.querySelector(".row");
+      row.replaceChildren(el("span", "outcome",
+        { inserted: "inserted at the prompt", ran: "ran in the terminal", dismissed: "dismissed" }[ev.outcome] || ev.outcome));
+      break;
+    }
+    case "agent":
+      $("agentline").replaceChildren(document.createTextNode(ev.name),
+        el("span", "meta", [ev.version && " · v" + ev.version, ev.model && " · " + ev.model].filter(Boolean).join("")));
+      break;
+    case "commands":
+      agentCommands = ev.commands || []; break;
     case "turn_end":
       agentEl = null; setBusy(false);
       if (ev.stopReason === "cancelled") note("stopped");
@@ -335,10 +385,55 @@ async function send() {
   const text = input.value.trim();
   if (!text) return;
   const r = await api("/api/send", { text, attach: $("attach").checked, screen: $("screen").checked });
-  if (r.ok) { input.value = ""; $("screen").checked = false; }
+  if (r.ok) { input.value = ""; $("screen").checked = false; updateSlash(); fitInput(); }
 }
 sendBtn.onclick = send;
+
+// ---- "/" commands: the panel's own plus Claude Code's (skills, custom commands) ----
+const PANEL_COMMANDS = [
+  { name: "new", description: "Start a fresh conversation", run: () => api("/api/new") },
+  { name: "explain", description: "Explain the last failed command", run: () => lastFailure ? $("explain").click() : note("No failed command to explain") },
+  { name: "screen", description: "Attach the visible screen to the next message", run: () => { $("screen").checked = true; } },
+  { name: "hide", description: "Hide the panel (⌃⇧.)", run: () => api("/api/dock") },
+];
+const slash = $("slash");
+let slashItems = [], slashSel = 0;
+function updateSlash() {
+  const m = /^\/(\S*)$/.exec(input.value);
+  if (!m) { slash.classList.remove("show"); slashItems = []; return; }
+  const q = m[1].toLowerCase();
+  const all = PANEL_COMMANDS.concat(agentCommands.filter((c) => !PANEL_COMMANDS.some((p) => p.name === c.name)));
+  slashItems = all.filter((c) => c.name.toLowerCase().startsWith(q))
+    .concat(all.filter((c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q))).slice(0, 50);
+  slashSel = Math.min(slashSel, Math.max(0, slashItems.length - 1));
+  slash.replaceChildren(...slashItems.map((c, i) => {
+    const row = el("div", i === slashSel ? "sel" : "", "/" + c.name);
+    row.appendChild(el("span", "d", c.description || ""));
+    row.onmousedown = (e) => { e.preventDefault(); slashSel = i; pickSlash(); };
+    return row;
+  }));
+  slash.classList.toggle("show", slashItems.length > 0);
+  const sel = slash.children[slashSel];
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+function pickSlash() {
+  const c = slashItems[slashSel];
+  if (!c) return;
+  if (c.run) { input.value = ""; c.run(); }
+  else input.value = "/" + c.name + " ";
+  updateSlash(); input.focus();
+}
+function fitInput() { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
+input.addEventListener("input", () => { slashSel = 0; updateSlash(); fitInput(); });
 input.addEventListener("keydown", (e) => {
+  if (slashItems.length && ["ArrowDown", "ArrowUp", "Tab", "Enter", "Escape"].includes(e.key)) {
+    e.preventDefault();
+    if (e.key === "ArrowDown") slashSel = (slashSel + 1) % slashItems.length;
+    else if (e.key === "ArrowUp") slashSel = (slashSel - 1 + slashItems.length) % slashItems.length;
+    else if (e.key === "Escape") { slashItems = []; slash.classList.remove("show"); return; }
+    else return pickSlash();
+    return updateSlash();
+  }
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   if (e.key === "Escape" && busy) { e.preventDefault(); api("/api/cancel"); }
 });
@@ -356,6 +451,7 @@ document.addEventListener("keydown", (e) => {
 $("attach").checked = store("attach") !== "0";
 $("attach").onchange = () => store("attach", $("attach").checked ? "1" : "0");
 connect();
+api("/api/hello");  // starts Claude Code early, for its model and / commands
 input.focus();
 </script>
 </body>
