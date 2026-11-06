@@ -452,6 +452,7 @@ function handle(ev) {
       break;
     }
     case "permission": {
+      agentEl = null;
       const card = add(el("div", "card"));
       card.id = "perm-" + ev.id;
       card.appendChild(el("div", "", "Allow Claude to run: " + ev.title + "?"));
@@ -474,6 +475,7 @@ function handle(ev) {
       if (lastFailure && lastFailure.id === ev.id) hideFailure();
       break;
     case "proposal": {
+      agentEl = null;  // text after the card starts a new message below it
       const card = add(el("div", "proposal"));
       card.id = "prop-" + ev.id;
       if (ev.reason) card.appendChild(el("div", "reason", ev.reason));
@@ -498,6 +500,7 @@ function handle(ev) {
       break;
     }
     case "doctor": {
+      agentEl = null;
       const allOk = ev.checks.every((c) => c.status === "ok");
       const card = add(el("div", "doctor" + (allOk ? " allok" : "")));
       card.appendChild(el("div", "head", ev.problemsOnly ? "Setup needs attention (/doctor for the full report)"
