@@ -52,6 +52,13 @@
   header .title::before { content: "✳ "; color: var(--accent); }
   header .title .meta { color: var(--dim); }
   header .status { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  header .pickers { display: flex; gap: 2px; white-space: nowrap; }
+  header .pickers select {
+    background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 3px;
+    font: inherit; padding: 0 2px; cursor: pointer; max-width: 16ch;
+  }
+  header .pickers select:hover, header .pickers select:focus { color: var(--fg); border-color: var(--border); outline: none; }
+  header .pickers option { background: var(--bg); color: var(--fg); }
   header label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
   header input { accent-color: var(--accent); margin: 0; }
 
@@ -153,6 +160,7 @@
 <body>
 <header>
   <span class="title" id="agentline">Claude Code</span>
+  <span class="pickers" id="pickers"></span>
   <span class="status" id="status">connecting…</span>
   <label title="Send the active session's directory, last command, exit status and output">
     <input type="checkbox" id="attach"> context</label>
@@ -530,7 +538,22 @@ function handle(ev) {
     }
     case "agent":
       $("agentline").replaceChildren(document.createTextNode(ev.name),
-        el("span", "meta", [ev.version && " · v" + ev.version, ev.model && " · " + ev.model].filter(Boolean).join("")));
+        el("span", "meta", ev.version ? " · v" + ev.version : ""));
+      $("pickers").replaceChildren(...(ev.options || []).map((o) => {
+        const sel = el("select");
+        sel.title = o.name + " (applies to every tab)";
+        o.choices.forEach((c) => {
+          const opt = el("option", "", c.name);
+          opt.value = c.value;
+          sel.appendChild(opt);
+        });
+        sel.value = o.current;
+        sel.onchange = async () => {
+          const r = await api("/api/config", { configId: o.id, value: sel.value });
+          if (!r.ok) sel.value = o.current;
+        };
+        return sel;
+      }));
       break;
     case "commands":
       agentCommands = ev.commands || []; break;

@@ -95,7 +95,18 @@ class AcpClient:
         modes = (result.get("modes") or {}).get("availableModes") or []
         if any(m.get("id") == mode for m in modes):
             await self.request("session/set_mode", {"sessionId": self.session_id, "modeId": mode})
+            self.session_info["configOptions"] = [
+                dict(o, currentValue=mode) if o.get("id") == "mode" else o
+                for o in result.get("configOptions") or []]
         return self.session_id
+
+    async def set_config_option(self, config_id: str, value: str) -> List[Dict[str, Any]]:
+        """Change a session option (model, mode, effort…); returns the updated options."""
+        result = await self.request("session/set_config_option",
+                                    {"sessionId": self.session_id, "configId": config_id, "value": value})
+        if isinstance(result, dict) and result.get("configOptions") is not None:
+            self.session_info["configOptions"] = result["configOptions"]
+        return self.session_info.get("configOptions") or []
 
     async def prompt(self, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not self.session_id:

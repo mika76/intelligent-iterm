@@ -5,6 +5,18 @@ import sys
 import urllib.request
 
 MCP = {}
+OPTIONS = [
+    {"id": "mode", "name": "Mode", "type": "select", "currentValue": "auto", "options": [
+        {"value": "default", "name": "Manual"}, {"value": "acceptEdits", "name": "Accept edits"},
+        {"value": "auto", "name": "Auto"}, {"value": "bypassPermissions", "name": "Bypass permissions"}]},
+    {"id": "model", "name": "Model", "type": "select", "currentValue": "default", "options": [
+        {"value": "default", "name": "Default (recommended)"}, {"value": "opus", "name": "Opus"},
+        {"value": "haiku", "name": "Haiku"}]},
+    {"id": "effort", "name": "Effort", "type": "select", "currentValue": "default", "options": [
+        {"value": "default", "name": "Default"}, {"value": "low", "name": "Low"}]},
+    {"id": "fast", "name": "Fast mode", "type": "select", "currentValue": "off", "options": [
+        {"value": "on", "name": "On"}, {"value": "off", "name": "Off"}]},
+]
 MARKDOWN = """
 
 ## Why it failed
@@ -66,8 +78,18 @@ for line in sys.stdin:
             MCP.update(server)
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "sessionId": "s1", "modes": {"currentModeId": "auto",
-                                         "availableModes": [{"id": "default"}, {"id": "auto"}]}}})
+                                         "availableModes": [{"id": m} for m in
+                                                            ("default", "acceptEdits", "auto", "bypassPermissions")]},
+            "configOptions": OPTIONS}})
+    elif method == "session/set_config_option":
+        for o in OPTIONS:
+            if o["id"] == p["configId"]:
+                o["currentValue"] = p["value"]
+        send({"jsonrpc": "2.0", "id": mid, "result": {"configOptions": OPTIONS}})
     elif method == "session/set_mode":
+        for o in OPTIONS:
+            if o["id"] == "mode":
+                o["currentValue"] = p["modeId"]
         send({"jsonrpc": "2.0", "id": mid, "result": {}})
     elif method == "session/prompt":
         text = "\n".join(b["text"] for b in p["prompt"])

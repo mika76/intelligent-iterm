@@ -13,9 +13,10 @@ import secrets
 
 import iterm2
 
-from . import config
+from . import config, settings
 from .dock import Dock
 from .panel import Panel
+from .settings import Settings
 from .terminal import ItermTerminal
 from .web import EventHub, WebServer, theme_vars
 
@@ -92,7 +93,7 @@ async def main(connection: iterm2.Connection) -> None:
     terminal = ItermTerminal(connection, app, lambda f: panel_ref[0].command_failed(f))
 
     command, env = config.agent_command_and_env()
-    panel = Panel(hub, terminal, command, env)
+    panel = Panel(hub, terminal, command, env, settings=Settings(settings.DEFAULT_PATH))
     panel_ref.append(panel)
 
     routes = panel.routes()

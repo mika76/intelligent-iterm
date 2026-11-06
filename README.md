@@ -92,7 +92,10 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    login and shell integration, and shows anything that needs fixing with the fix.
    `/doctor` shows the full report.
 
-The header shows the agent, adapter version and model, like Intelligent Terminal's pane.
+The header shows the agent and adapter version, like Intelligent Terminal's pane, and
+dropdowns for the **model**, **mode** and **effort**. A change applies to every tab's
+conversation at once, and is remembered for new tabs and the next run (in
+`~/Library/Application Support/intelligent-iterm/settings.json`).
 
 The agent prompts (system prompt and the Explain/fix instructions) are adapted from
 [Microsoft Intelligent Terminal](https://github.com/microsoft/intelligent-terminal)'s
@@ -102,8 +105,10 @@ MCP server at `/mcp` on the panel's local server.
 The panel takes its colors and font from the active session's iTerm2 profile, and updates
 when you switch to a session with a different profile, so it looks like part of the terminal.
 
-Claude's own tool use (reading files, running commands in its own process) runs in
-Claude Code's **Manual** permission mode. Each tool call shows Allow/Reject buttons in the panel.
+Claude's own tool use (reading files, running commands in its own process) starts in
+Claude Code's **Manual** permission mode: each tool call shows Allow/Reject buttons in the
+panel. The mode dropdown switches to Accept edits, Plan or Auto; Bypass permissions isn't
+offered in the panel.
 
 ## Requirements
 
@@ -258,7 +263,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   tables, links, code, bold/italic/strikethrough) but isn't a full CommonMark parser. Links
   open in your default browser.
 - **Permission prompts** only offer the options the adapter sends. There is no per-tool
-  settings UI. The session runs in Manual mode regardless of your Claude Code default.
+  settings UI. Sessions start in Manual mode (or the mode you picked in the header),
+  not your Claude Code default.
 - **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,
   MCP servers), so the first turn has a sizeable cached prompt.
 - **Split panes in one tab** share that tab's conversation; the context comes from the
