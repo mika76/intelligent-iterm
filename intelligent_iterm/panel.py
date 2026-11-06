@@ -119,6 +119,7 @@ class Conversation:
         self.agent: Optional[AcpClient] = None
         self.version = ""
         self.options: List[Dict[str, Any]] = []  # the session's config options (model, mode…)
+        self.start_mode: Optional[str] = None  # the mode the agent started in, before the user's picks
         self._needs_instructions = False  # agents without a system prompt get them in the first message
         self._follow_up: Optional[tuple] = None  # (text, blocks) to send once the turn ends
         self._lock = asyncio.Lock()
@@ -162,6 +163,7 @@ class Conversation:
                 raise
             self._needs_instructions = not self.spec.claude
             options = agent.session_info.get("configOptions") or []
+            self.start_mode = next((o["current"] for o in picker_options(options) if o["kind"] == "mode"), None)
             for o in picker_options(options):  # the user's picks from earlier
                 options = await _apply_option(agent, options, o["id"],
                                               self.panel.settings.option(self.spec.id, o["id"]))
@@ -562,8 +564,9 @@ class Panel:
         self.hub.set_conv_sticky(conv.key, "agent", {
             "type": "agent", "id": conv.spec.id, "name": conv.spec.name, "version": conv.version,
             "agents": [{"id": a.id, "name": a.name} for a in self.agents],
-            "options": [{k: o[k] for k in ("id", "name", "current", "choices")}
-                        for o in picker_options(conv.options)]})
+            "options": [{k: o[k] for k in ("kind", "id", "name", "current", "choices")}
+                        for o in picker_options(conv.options)],
+            "startMode": conv.start_mode})
 
     # ---- tools the agent calls (MCP) ------------------------------------------
 

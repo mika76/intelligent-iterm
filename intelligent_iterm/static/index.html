@@ -48,30 +48,41 @@
   button.primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--bg)); }
   button.link { border: none; padding: 0 2px; color: var(--dim); }
 
-  /* Title strip, like a pane title */
+  /* Title strip, like a pane title: one quiet line; settings live in a menu */
   header {
-    display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+    position: relative; display: flex; align-items: center; gap: 8px; padding: 4px 10px;
     border-bottom: 1px solid var(--border); font-size: var(--small); color: var(--dim);
   }
-  header .title { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  header .title::before { content: "✳ "; color: var(--accent); }
-  header .title .meta { color: var(--dim); }
+  header button.title {
+    border: none; padding: 0; background: none; color: var(--fg); font: inherit; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  header button.title::before { content: "✳ "; color: var(--accent); }
+  header button.title .meta { color: var(--dim); }
+  header button.title:hover .caret, header button.title[aria-expanded="true"] .caret { color: var(--fg); }
+  header .badge {
+    color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--bg));
+    border-radius: 3px; padding: 0 4px; white-space: nowrap; cursor: pointer;
+  }
   header .status { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  header select.agentpick {
-    background: transparent; color: var(--fg); border: 1px solid transparent; border-radius: 3px;
-    font: inherit; padding: 0 2px; cursor: pointer;
+  header button.icon { border: none; background: none; padding: 0 3px; color: var(--dim); font: inherit; cursor: pointer; }
+  header button.icon:hover { color: var(--fg); }
+  #menu {
+    position: absolute; top: 100%; left: 8px; z-index: 10; margin-top: 2px; min-width: 260px;
+    background: var(--bg); color: var(--dim); border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 10px; font-size: var(--small);
   }
-  header select.agentpick:hover, header select.agentpick:focus { border-color: var(--border); outline: none; }
-  header .pickers { display: flex; gap: 2px; white-space: nowrap; flex: none; }
-  header .pickers select { flex: none; }
-  header .pickers select {
-    background: transparent; color: var(--dim); border: 1px solid transparent; border-radius: 3px;
-    font: inherit; padding: 0 2px; cursor: pointer; max-width: 22ch;
+  #menu[hidden] { display: none; }
+  #menu .grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; align-items: center; }
+  #menu select {
+    background: transparent; color: var(--fg); border: 1px solid var(--border); border-radius: 3px;
+    font: inherit; padding: 0 2px; cursor: pointer; max-width: 28ch;
   }
-  header .pickers select:hover, header .pickers select:focus { color: var(--fg); border-color: var(--border); outline: none; }
-  header .pickers option { background: var(--bg); color: var(--fg); }
-  header label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-  header input { accent-color: var(--accent); margin: 0; }
+  #menu select:focus { border-color: var(--accent); outline: none; }
+  #menu option { background: var(--bg); color: var(--fg); }
+  #menu label.ctx { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--fg); cursor: pointer; }
+  #menu input { accent-color: var(--accent); margin: 0; }
+  #menu .foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 
   /* Transcript */
   #log { flex: 1; overflow-y: auto; padding: 8px 10px 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -170,15 +181,18 @@
 </head>
 <body>
 <header>
-  <span class="title" id="agentline">Claude Code</span>
-  <span class="pickers" id="pickers"></span>
-  <span class="status" id="status">connecting…</span>
-  <label title="Send the active session's directory, last command, exit status and output">
-    <input type="checkbox" id="attach"> context</label>
-  <label title="Also send the visible screen with the next message">
-    <input type="checkbox" id="screen"> screen</label>
-  <button id="newchat" class="link" title="Start a fresh conversation">new</button>
-  <button id="dock" class="link"></button>
+  <button class="title" id="agentline" aria-haspopup="true" aria-expanded="false"
+          title="Agent, model and settings (/settings)">Claude Code</button>
+  <span class="badge" id="modebadge" hidden title="This tab's mode: what the agent may do without asking"></span>
+  <span class="status" id="status"></span>
+  <button id="newchat" class="icon" title="New chat (/new)" aria-label="New chat">＋</button>
+  <button id="dock" class="icon"></button>
+  <div id="menu" hidden>
+    <div class="grid" id="menugrid"></div>
+    <label class="ctx" title="The active session's directory, last command, exit status and output">
+      <input type="checkbox" id="attach"> Send terminal context with each message</label>
+    <div class="foot" id="menufoot"></div>
+  </div>
 </header>
 <main id="log"></main>
 <div id="failbar">
@@ -451,11 +465,13 @@ function handle(ev) {
       applyTheme(ev); break;
     case "switch":
       conv = ev.conv;
+      sessionDir = "";
       log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure(); break;
     case "reset":
+      sessionDir = "";
       log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure(); break;
     case "status":
-      $("status").textContent = ev.text; break;
+      showStatus(ev.text); break;
     case "user": {
       agentEl = null;
       const m = add(el("div", "msg user", ev.text));
@@ -569,37 +585,11 @@ function handle(ev) {
       });
       break;
     }
-    case "agent": {
+    case "agent":
       agentName = ev.name;
-      let who = document.createTextNode(ev.name);
-      if ((ev.agents || []).length > 1) {  // more than one ACP agent installed: let the user pick
-        who = el("select", "agentpick");
-        who.title = "Agent for this tab (starts a new conversation; new tabs use it too)";
-        ev.agents.forEach((a) => { const o = el("option", "", a.name); o.value = a.id; who.appendChild(o); });
-        who.value = ev.id;
-        who.onchange = async () => {
-          const r = await api("/api/agent", { agent: who.value });
-          if (!r.ok) who.value = ev.id;
-        };
-      }
-      $("agentline").replaceChildren(who, el("span", "meta", ev.version ? " · v" + ev.version : ""));
-      $("pickers").replaceChildren(...(ev.options || []).map((o) => {
-        const sel = el("select");
-        sel.title = o.name + " (applies to every tab using this agent)";
-        o.choices.forEach((c) => {
-          const opt = el("option", "", c.name);
-          opt.value = c.value;
-          sel.appendChild(opt);
-        });
-        sel.value = o.current;
-        sel.onchange = async () => {
-          const r = await api("/api/config", { configId: o.id, value: sel.value });
-          if (!r.ok) sel.value = o.current;
-        };
-        return sel;
-      }));
+      header = ev;
+      renderHeader();
       break;
-    }
     case "commands":
       agentCommands = ev.commands || []; break;
     case "turn_end":
@@ -617,10 +607,10 @@ function connect() {
   es.onopen = () => {
     // The server replays theme + the whole conversation on every (re)connect.
     log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure();
-    $("status").textContent = "ready";
+    showStatus("");
   };
   es.onmessage = (m) => handle(JSON.parse(m.data));
-  es.onerror = () => { $("status").textContent = "disconnected — retrying…"; };
+  es.onerror = () => { showStatus("disconnected — retrying…"); };
 }
 
 // ---- composer ----------------------------------------------------------------
@@ -628,8 +618,8 @@ async function send() {
   if (busy) { await api("/api/cancel"); return; }
   const text = input.value.trim();
   if (!text) return;
-  const r = await api("/api/send", { text, attach: $("attach").checked, screen: $("screen").checked });
-  if (r.ok) { input.value = ""; $("screen").checked = false; updateSlash(); fitInput(); }
+  const r = await api("/api/send", { text, attach: $("attach").checked, screen: screenOnce });
+  if (r.ok) { input.value = ""; screenOnce = false; showStatus(""); updateSlash(); fitInput(); }
 }
 sendBtn.onclick = send;
 
@@ -637,7 +627,9 @@ sendBtn.onclick = send;
 const PANEL_COMMANDS = [
   { name: "new", description: "Start a fresh conversation", run: () => api("/api/new") },
   { name: "explain", description: "Explain the last failed command", run: () => lastFailure ? $("explain").click() : note("No failed command to explain") },
-  { name: "screen", description: "Attach the visible screen to the next message", run: () => { $("screen").checked = true; } },
+  { name: "screen", description: "Attach the visible screen to the next message",
+    run: () => { screenOnce = true; showStatus("the visible screen goes with your next message"); } },
+  { name: "settings", description: "Agent, model, mode, effort and context", run: () => toggleMenu(true) },
   { name: "doctor", description: "Check the setup (Node, Claude Code, shell integration)", run: () => api("/api/doctor") },
   { name: "hide", description: "Hide the panel (⌃⇧.)", run: () => api("/api/dock") },
 ];
@@ -666,7 +658,8 @@ function pickSlash() {
   if (!c) return;
   if (c.run) { input.value = ""; c.run(); }
   else input.value = "/" + c.name + " ";
-  updateSlash(); input.focus();
+  updateSlash();
+  if ($("menu").hidden) input.focus();  // /settings leaves the focus in its menu
 }
 function fitInput() { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
 input.addEventListener("input", () => { slashSel = 0; updateSlash(); fitInput(); });
@@ -689,14 +682,91 @@ input.addEventListener("keydown", (e) => {
 $("newchat").onclick = () => api("/api/new");
 // Docked (bottom split) vs toolbelt: same page, the server adds dock=1 for the split.
 const docked = new URLSearchParams(location.search).get("dock") === "1";
-$("dock").textContent = docked ? "hide" : "dock ↓";
-$("dock").title = (docked ? "Close this pane" : "Open the panel below the terminal") + " (⌃⇧.)";
+$("dock").textContent = docked ? "⌄" : "⬓";
+$("dock").title = (docked ? "Hide the panel" : "Open the panel below the terminal") + " (⌃⇧.)";
+$("dock").setAttribute("aria-label", $("dock").title);
 $("dock").onclick = () => api("/api/dock");
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === "Period") {
     e.preventDefault(); api("/api/dock");
   }
 });
+// ---- header: one quiet line; everything else in the settings menu --------------
+let header = null;      // the latest "agent" event for this tab's conversation
+let sessionDir = "";    // from "Session started in …", shown in the menu's footer
+let screenOnce = false; // /screen: attach the visible screen to the next message
+function showStatus(text) {
+  // Only what's happening now (starting, errors, disconnected); the rest is in the menu.
+  const m = /^Session started in (.*)$/.exec(text || "");
+  if (m) { sessionDir = m[1]; text = ""; renderHeader(); }
+  $("status").textContent = text || "";
+}
+function pickerLabel(o) {
+  return { model: "Model", mode: "Mode", effort: "Effort" }[o.kind] || o.name;
+}
+function choiceName(o) {
+  const c = o.choices.find((x) => x.value === o.current);
+  return c ? c.name : (o.current || "");
+}
+function renderHeader() {
+  if (!header) return;
+  const opts = header.options || [];
+  const model = opts.find((o) => o.kind === "model");
+  const mode = opts.find((o) => o.kind === "mode");
+  // Label: agent, and the model only when it isn't the agent's default.
+  const label = [document.createTextNode(header.name)];
+  if (model && model.current && model.current !== "default") label.push(el("span", "meta", " · " + choiceName(model)));
+  label.push(el("span", "meta caret", " ▾"));
+  $("agentline").replaceChildren(...label);
+  // Badge: the mode, only when it isn't the one the agent started in (Manual for Claude Code).
+  const badge = $("modebadge");
+  badge.hidden = !(mode && header.startMode && mode.current !== header.startMode);
+  if (!badge.hidden) badge.textContent = choiceName(mode);
+  // Menu: agent (when there are several), the session's pickers, footer.
+  const rows = [];
+  if ((header.agents || []).length > 1) {
+    const sel = el("select");
+    sel.title = "Agent for this tab (starts a new conversation; new tabs use it too)";
+    header.agents.forEach((a) => { const o = el("option", "", a.name); o.value = a.id; sel.appendChild(o); });
+    sel.value = header.id;
+    sel.onchange = async () => {
+      const r = await api("/api/agent", { agent: sel.value });
+      if (!r.ok) sel.value = header.id;
+    };
+    rows.push(el("span", "", "Agent"), sel);
+  }
+  opts.forEach((o) => {
+    const sel = el("select");
+    sel.title = o.name + " (applies to every tab using this agent)";
+    o.choices.forEach((c) => { const opt = el("option", "", c.name); opt.value = c.value; sel.appendChild(opt); });
+    sel.value = o.current;
+    sel.onchange = async () => {
+      const r = await api("/api/config", { configId: o.id, value: sel.value });
+      if (!r.ok) sel.value = o.current;
+    };
+    rows.push(el("span", "", pickerLabel(o)), sel);
+  });
+  $("menugrid").replaceChildren(...rows);
+  $("menufoot").textContent = [header.name + (header.version ? " v" + header.version : ""), sessionDir]
+    .filter(Boolean).join(" · ");
+}
+function toggleMenu(open) {
+  const menu = $("menu");
+  const show = open === undefined ? menu.hidden : open;
+  menu.hidden = !show;
+  $("agentline").setAttribute("aria-expanded", String(show));
+  if (show) { const first = menu.querySelector("select, input"); if (first) first.focus(); }
+  else input.focus();
+}
+$("agentline").onclick = () => toggleMenu();
+$("modebadge").onclick = () => toggleMenu(true);
+document.addEventListener("mousedown", (e) => {
+  if (!$("menu").hidden && !e.target.closest("#menu, #agentline, #modebadge")) toggleMenu(false);
+});
+document.addEventListener("keydown", (e) => {  // Esc closes the menu from anywhere
+  if (e.key === "Escape" && !$("menu").hidden) { e.preventDefault(); e.stopPropagation(); toggleMenu(false); }
+}, true);
+
 // ---- keyboard for waiting cards (like Intelligent Terminal's pane) -------------
 // ↑ in the empty input selects the newest card that is waiting for an answer;
 // ←/→ (or ↑/↓) move the selection over its buttons, Enter presses the selected one,

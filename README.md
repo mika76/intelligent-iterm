@@ -53,7 +53,7 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
 1. **Chat panel** with streamed replies, in either of two places:
    - **Docked below the terminal** (like Intelligent Terminal's agent pane). Open or close
      it for the current tab with **Ctrl+Shift+.**, the status bar button (**⬓ Claude Code ▴**, showing the tab's agent),
-     `hide` in the panel, or `dock ↓` in the toolbelt. To add the button, go to iTerm2 >
+     the panel's **⌄** button, or **⬓** in the toolbelt. To add the button, go to iTerm2 >
      Settings > Profiles > Session > *Configure Status Bar* and drag in **Agent panel**.
      It only appears in the picker while the script is running. It's an iTerm2 browser split pane, created with per-session settings,
      so no profile is added to your iTerm2 config. The script hides the pane's browser
@@ -67,10 +67,10 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    **Each tab has its own conversation**, with its own Claude Code process. A tab's
    docked panel always shows that tab's conversation; the toolbelt shows the active
    tab's and switches when you change tabs. Closing a tab ends its conversation.
-2. **context** (header, on by default) sends the active session's directory, shell, window
+2. **Terminal context** (in the settings menu, on by default) sends the active session's directory, shell, window
    title, last command, exit status and output with each message, as JSON. If shell
    integration has no command history, it sends the last 60 lines of the terminal instead.
-   **screen** also attaches the visible screen once, with the next message. Claude can
+   `/screen` also attaches the visible screen once, with the next message. Claude can
    also read the terminal itself with its `read_terminal` tool.
 3. **Explain / fix**: when a command in the active session exits non-zero, a status bar
    above the input shows it with an **Explain** button (or type `/explain`). Claude works
@@ -95,17 +95,20 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    login and shell integration, and shows anything that needs fixing with the fix.
    `/doctor` shows the full report.
 
-The header shows the agent and its version, like Intelligent Terminal's pane, and
-dropdowns for the **model**, **mode** and **effort**. A change applies to every tab using
-that agent, and is remembered for new tabs and the next run (in
-`~/Library/Application Support/intelligent-iterm/settings.json`).
+The header is one quiet line: the agent (and the model, when it isn't the default), a
+badge when the mode isn't the one the agent started in (for example **Accept edits**),
+what's happening right now (starting, errors), and **＋** (new chat) and **⌄** (hide).
+Click the agent name, or type `/settings`, for the menu: agent, **model**, **mode**,
+**effort**, the terminal-context checkbox, and the version and working folder. A change
+applies to every tab using that agent, and is remembered for new tabs and the next run
+(in `~/Library/Application Support/intelligent-iterm/settings.json`). Esc closes it.
 
 ### Other agents
 
 Claude Code is the default, but the panel speaks the
 [Agent Client Protocol](https://agentclientprotocol.com), so other ACP agents work too.
 When **Gemini CLI** (`gemini --acp`), **OpenCode** (`opencode acp`) or **GitHub Copilot**
-(`copilot --acp`) is installed, the agent name in the header becomes a dropdown. Picking
+(`copilot --acp`) is installed, the settings menu gets an **Agent** dropdown. Picking
 one starts this tab's conversation over with that agent and makes it the default for new
 tabs; other tabs keep theirs. Sign in to each agent's CLI once in a terminal first.
 
@@ -303,7 +306,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   tables, links, code, bold/italic/strikethrough) but isn't a full CommonMark parser. Links
   open in your default browser.
 - **Permission prompts** only offer the options the adapter sends. There is no per-tool
-  settings UI. Sessions start in Manual mode (or the mode you picked in the header),
+  settings UI. Sessions start in Manual mode (or the mode you picked in the settings menu),
   not your Claude Code default.
 - **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,
   MCP servers), so the first turn has a sizeable cached prompt.
