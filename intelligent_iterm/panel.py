@@ -50,7 +50,8 @@ When running a command in the user's terminal is the outcome they want, call
 in zsh or fish, e.g. for a heredoc) and a short reason. The user
 inserts it at their prompt, runs it, or dismisses it in the panel, and the tool
 returns their choice. Propose at most one command per turn; when it returns, end
-the turn with at most one short sentence. You don't see the command's output, so
+the turn with at most one short sentence. When the user asks what a proposed command
+does, explain it and then propose it again. You don't see the command's output, so
 don't describe it; call `read_terminal` if you need it. Don't repeat the command
 in a code block.
 
@@ -89,6 +90,21 @@ corrected command.
 PICKERS = (("model", ("model",)), ("mode", ("mode",)), ("effort", ("thought_level", "effort")))
 HIDDEN_CHOICES = {"bypassPermissions"}
 
+# "What does this do?" on a command card: the card closes with this result, and
+# the question follows as the user's own next message (instructions inside a
+# tool result are rightly treated as data, not as the user speaking).
+EXPLAIN_RESULT = ("The user hasn't run the command. They asked what it does; their question is "
+                  "their next message. End this turn now, without writing anything or proposing again.")
+EXPLAIN_QUESTION = """\
+What does this command do? Explain it before I decide whether to run it:
+
+{command}
+
+One sentence on what it does as a whole, then a short list with each part, flag
+and argument, then anything it changes, deletes or sends over the network, and
+whether that can be undone. Don't run it. Then propose it again with
+propose_command, or a safer variant if that's better (say why)."""
+
 MAX_OUTPUT_CHARS = 12000
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # newlines are checked separately
 
@@ -104,6 +120,7 @@ class Conversation:
         self.version = ""
         self.options: List[Dict[str, Any]] = []  # the session's config options (model, mode…)
         self._needs_instructions = False  # agents without a system prompt get them in the first message
+        self._follow_up: Optional[tuple] = None  # (text, blocks) to send once the turn ends
         self._lock = asyncio.Lock()
         self.turn: Optional[asyncio.Task] = None
         self.permissions: Dict[str, asyncio.Future] = {}
@@ -176,6 +193,18 @@ class Conversation:
         self.turn = asyncio.ensure_future(self._run_turn(blocks))
         return {}
 
+    def follow_up(self, text: str, blocks: List[Dict[str, Any]]) -> None:
+        """Send a message as soon as the current turn has ended."""
+        self._follow_up = (text, blocks)
+
+    async def _send_follow_up(self, previous: Optional[asyncio.Task]) -> None:
+        if previous is not None:
+            await asyncio.wait([previous])
+        if self._follow_up and not self.busy:
+            text, blocks = self._follow_up
+            self._follow_up = None
+            await self.start_turn(text, blocks, None)
+
     async def _run_turn(self, blocks: List[Dict[str, Any]]) -> None:
         try:
             agent = await self.ensure_agent()
@@ -191,6 +220,8 @@ class Conversation:
             self.publish({"type": "turn_end", "stopReason": "error"})
         finally:
             self.cancel_pending()
+            if self._follow_up:
+                asyncio.ensure_future(self._send_follow_up(self.turn))
 
     async def on_update(self, u: Dict[str, Any]) -> None:
         kind = u.get("sessionUpdate")
@@ -273,6 +304,7 @@ class Conversation:
         return outcome
 
     async def cancel(self) -> None:
+        self._follow_up = None  # Stop / New chat: don't ask the queued question either
         self.cancel_pending()
         if self.agent and self.busy:
             await self.agent.cancel()
@@ -422,6 +454,11 @@ class Panel:
         if action in ("insert", "run"):
             await self.terminal.insert(p["command"], session_id=p["session_id"], run=action == "run")
             p["future"].set_result("inserted" if action == "insert" else "ran")
+        elif action == "explain":  # "What does this do?": asked as the user's next message
+            conv = self._conv(body)
+            conv.follow_up(f"What does `{p['command']}` do?",
+                           [{"type": "text", "text": EXPLAIN_QUESTION.format(command=p["command"])}])
+            p["future"].set_result("explain")
         else:
             p["future"].set_result("dismissed")
         return {}
@@ -531,8 +568,9 @@ class Panel:
         return [
             Tool("propose_command",
                  "Propose one shell command for the user's iTerm2 terminal. The user sees it in the "
-                 "panel and chooses to insert it at their prompt, run it, or dismiss it. Returns their "
-                 "choice: inserted, ran or dismissed. Use the terminal's shell syntax. Prefer one line; "
+                 "panel and chooses to insert it at their prompt, run it, dismiss it, or ask what it "
+                 "does. Returns their choice: inserted, ran, dismissed, or a request to explain the "
+                 "command and propose it again. Use the terminal's shell syntax. Prefer one line; "
                  "a multi-line command (heredoc, loop) is accepted in zsh and fish and refused otherwise. "
                  "Destructive commands are shown with a warning and need a second click to run.",
                  {"type": "object", "required": ["command", "reason"], "properties": {
@@ -565,7 +603,8 @@ class Panel:
         outcome = await c.propose(command, reason)
         return {"inserted": "The user inserted the command at their prompt (not run yet).",
                 "ran": "The user ran the command in their terminal.",
-                "dismissed": "The user dismissed the proposal."}[outcome]
+                "dismissed": "The user dismissed the proposal.",
+                "explain": EXPLAIN_RESULT}[outcome]
 
     async def _read_terminal(self, args: Dict[str, Any], _conv: str) -> str:
         return format_context(await self.terminal.get_context(include_screen=bool(args.get("screen"))))

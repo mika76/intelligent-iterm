@@ -83,6 +83,25 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e["type"] == "proposal_done" and e["outcome"] == "inserted" for e in seen))
         self.assertIn("inserted the command", "".join(e.get("text", "") for e in seen if e["type"] == "chunk"))
 
+    async def test_what_does_this_do(self):
+        """The card's "What does this do?" closes the card and asks the question as
+        the user's next message; nothing reaches the terminal."""
+        await http(self.port, "POST", "/api/send", {"text": "propose a fix"}, token="secret")
+        prop = (await self.events_until("proposal"))[-1]
+        status, _ = await http(self.port, "POST", "/api/proposal", {"id": prop["id"], "action": "explain"},
+                               token="secret")
+        self.assertEqual(status, 200)
+        first = await self.events_until("turn_end")
+        self.assertTrue(any(e["type"] == "proposal_done" and e["outcome"] == "explain" for e in first))
+        self.assertIn("End this turn now", "".join(e.get("text", "") for e in first if e["type"] == "chunk"))
+        second = await self.events_until("turn_end")
+        user = next(e for e in second if e["type"] == "user")
+        self.assertEqual(user["text"], "What does `ls -la` do?")
+        asked = "".join(e.get("text", "") for e in second if e["type"] == "chunk")
+        self.assertIn("Explain it before I decide", asked)
+        self.assertIn("ls -la", asked)
+        self.assertEqual(self.term.inserted, [])
+
     async def test_mcp_needs_token_and_lists_tools(self):
         req = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         status, _ = await http(self.port, "POST", "/mcp", req)

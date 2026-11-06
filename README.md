@@ -78,7 +78,10 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
    or asks when the goal isn't clear.
 4. **Proposed commands**: Claude proposes a command with its `propose_command` tool, and
    the panel shows it as a card with **Insert ⇥** (type it at your prompt, no Enter),
-   **Run ⏎** (type it and press Enter) and **Dismiss**. Claude is told which you chose.
+   **Run ⏎** (type it and press Enter), **What does this do?** and **Dismiss**. Claude
+   is told which you chose. *What does this do?* asks, as your next message, for an
+   explanation of each part and flag and what it changes or deletes; Claude then proposes
+   the command again, or a safer variant such as a dry run.
    Commands only go to your terminal when you click. Destructive commands (`rm -rf`,
    `sudo`, force-push, `git reset --hard`, `curl … | sh` and the like) get a red warning
    saying what they do, and **Run** needs a second click. Multi-line commands (heredocs,

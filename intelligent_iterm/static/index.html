@@ -506,6 +506,7 @@ function handle(ev) {
       const row = card.appendChild(el("div", "row"));
       [["insert", "Insert ⇥", "primary", "Type it at your prompt without running it"],
        ["run", "Run ⏎", "", "Type it and press Enter in your terminal"],
+       ["explain", "What does this do?", "link", "Ask for an explanation of each part before deciding"],
        ["dismiss", "Dismiss", "link", ""]].forEach(([action, label, cls, title]) => {
         const b = el("button", cls, label);
         b.title = title;
@@ -529,7 +530,8 @@ function handle(ev) {
       if (!card) break;
       const row = card.querySelector(".row");
       row.replaceChildren(el("span", "outcome",
-        { inserted: "inserted at the prompt", ran: "ran in the terminal", dismissed: "dismissed" }[ev.outcome] || ev.outcome));
+        { inserted: "inserted at the prompt", ran: "ran in the terminal", dismissed: "dismissed",
+          explain: "asked what it does" }[ev.outcome] || ev.outcome));
       break;
     }
     case "doctor": {
