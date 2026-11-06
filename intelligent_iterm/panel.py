@@ -335,6 +335,7 @@ class Panel:
         self.mcp = McpServer(self._tools())
         self.mcp_endpoint: Optional[tuple] = None  # (url, token), set once the web server runs
         self._checked_setup = False
+        self.on_agent: Optional[Any] = None  # (tab key, agent name) -> None: set by main for the status bar
         hub.resolve_active = self.active_key
 
     def next_id(self) -> str:
@@ -556,6 +557,8 @@ class Panel:
     def publish_header(self, conv: Conversation) -> None:
         """A conversation's header line: its agent (a picker when there are several),
         version, and pickers for the session options it offers."""
+        if self.on_agent is not None:
+            self.on_agent(conv.key, conv.spec.name)
         self.hub.set_conv_sticky(conv.key, "agent", {
             "type": "agent", "id": conv.spec.id, "name": conv.spec.name, "version": conv.version,
             "agents": [{"id": a.id, "name": a.name} for a in self.agents],

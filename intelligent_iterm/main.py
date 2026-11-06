@@ -115,6 +115,9 @@ async def main(connection: iterm2.Connection) -> None:
         connection, "Claude", TOOL_ID, False, web.url)
     log.info("registered toolbelt tool %s", TOOL_ID)
     dock = Dock(connection, app, terminal, web.url, hub=hub)
+    # The status bar button shows each tab's agent.
+    dock.default_agent_name = lambda: panel.default_agent().name
+    panel.on_agent = lambda tab, name: asyncio.ensure_future(dock.set_agent_label(tab, name))
 
     async def toggle_dock(_body: dict) -> dict:
         return await dock.toggle()
