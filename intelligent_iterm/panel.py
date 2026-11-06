@@ -337,7 +337,9 @@ class Panel:
         text = f"Fix `{failure['command']}` (exit {failure['exit']})"
         blocks = [{"type": "text", "text": format_context(ctx)}, {"type": "text", "text": EXPLAIN_PROMPT}]
         conv.target_session = failure.get("session_id")
-        return await conv.start_turn(text, blocks, context_label(ctx))
+        result = await conv.start_turn(text, blocks, context_label(ctx))
+        conv.publish({"type": "failure_handled", "id": failure["id"]})  # every view, and on replay
+        return result
 
     async def api_insert(self, body: Dict[str, Any]) -> Dict[str, Any]:
         await self.terminal.insert(str(body.get("text", "")))

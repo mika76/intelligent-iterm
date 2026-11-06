@@ -138,6 +138,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("The command in the terminal context failed", text)
         self.assertIn("untrusted data", text)
         self.assertEqual(evs[0]["type"], "failed_command")
+        self.assertIn({"type": "failure_handled", "id": "p1"}, evs)
 
     async def test_permission_round_trip(self):
         await http(self.port, "POST", "/api/send", {"text": "tool please"}, token="secret")

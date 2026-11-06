@@ -470,6 +470,9 @@ function handle(ev) {
     }
     case "failed_command":
       showFailure(ev); break;
+    case "failure_handled":
+      if (lastFailure && lastFailure.id === ev.id) hideFailure();
+      break;
     case "proposal": {
       const card = add(el("div", "proposal"));
       card.id = "prop-" + ev.id;
