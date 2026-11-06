@@ -71,21 +71,19 @@ class Dock:
 
         window = session.window
         frame = await window.async_get_frame() if window else None
+        colors = await _color_properties(session)
         profile = iterm2.LocalWriteOnlyProfile()
-        # The split starts from the default profile. Copy the terminal's colors
-        # so the pane (and, with the Minimal theme, the window's title and tab
-        # bar, which follow the focused pane) doesn't switch colors when it opens.
-        try:
-            props = (await session.async_get_profile()).all_properties
-            for key, value in props.items():
-                if "Color" in key or key == "Use Separate Colors for Light and Dark Mode":
-                    profile._simple_set(key, value)  # pylint: disable=protected-access
-        except Exception:  # noqa: BLE001 - cosmetic
-            log.info("could not copy terminal colors", exc_info=True)
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
         profile._simple_set("Initial URL", self.url)      # pylint: disable=protected-access
         panel = await session.async_split_pane(vertical=False, profile_customizations=profile)
         self._panels[tab.tab_id] = panel.session_id
+        # A browser pane starts black and ignores colors passed with the split;
+        # with the Minimal theme the window's title and tab bar follow the
+        # focused pane, so the whole window flashed. Give it the terminal's colors.
+        try:
+            await panel.async_set_profile_properties(colors)
+        except Exception:  # noqa: BLE001 - cosmetic
+            log.info("could not copy terminal colors", exc_info=True)
         # The new pane's focus event can arrive before we knew it was a panel.
         self.terminal.remember_terminal(tab.tab_id, session.session_id)
         await _set_state(session, "open")
@@ -214,6 +212,17 @@ async def hide_browser_toolbar() -> str:
         result = f"failed: {e}"
     log.info("hide browser toolbar: %s", result)
     return result
+
+
+async def _color_properties(session: iterm2.Session) -> iterm2.LocalWriteOnlyProfile:
+    colors = iterm2.LocalWriteOnlyProfile()
+    try:
+        for key, value in (await session.async_get_profile()).all_properties.items():
+            if "Color" in key or key == "Use Separate Colors for Light and Dark Mode":
+                colors._simple_set(key, value)  # pylint: disable=protected-access
+    except Exception:  # noqa: BLE001 - cosmetic
+        log.info("could not read terminal colors", exc_info=True)
+    return colors
 
 
 async def _set_state(session: iterm2.Session, state: str) -> None:
