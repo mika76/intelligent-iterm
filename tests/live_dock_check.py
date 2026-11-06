@@ -22,6 +22,11 @@ from test_bridge import FAKE_AGENT  # noqa: E402
 MARK = "intelligent-iterm-dock-check"
 
 
+async def button_state(session):
+    """The status bar button's state variable is "open|<agent>" or "closed|<agent>"."""
+    return ((await session.async_get_variable("user.claude_panel")) or "").partition("|")[0]
+
+
 
 async def main(connection):
     app = await iterm2.async_get_app(connection)
@@ -58,7 +63,7 @@ async def main(connection):
         started = time.monotonic()
         check("dock opens", (await dock.toggle())["state"] == "open")
         print(f"     (opened in {time.monotonic() - started:.2f}s)")
-        check("button state open", await shell.async_get_variable("user.claude_panel") == "open")
+        check("button state open", await button_state(shell) == "open")
         tab = window.current_tab
         panel_id = dock._panels.get(tab.tab_id)
         panel_session = app.get_session_by_id(panel_id)
@@ -121,7 +126,7 @@ async def main(connection):
               and len(t.sessions) == 2 and not t.minimized_sessions)
         await dock.toggle(shell)
         await asyncio.sleep(0.5)
-        check("button state closed", await shell.async_get_variable("user.claude_panel") == "closed")
+        check("button state closed", await button_state(shell) == "closed")
 
         def same(a, b):
             return (round(a.size.width), round(a.size.height)) == (round(b.size.width), round(b.size.height))
@@ -137,7 +142,7 @@ async def main(connection):
 
         # Status bar click path, then the user closing the pane with its own close button.
         await dock.toggle(shell)
-        check("button state open again", await shell.async_get_variable("user.claude_panel") == "open")
+        check("button state open again", await button_state(shell) == "open")
         reopened = app.get_session_by_id(dock._panels[tab.tab_id])
         await reopened.async_close(force=True)
         for _ in range(20):
@@ -148,7 +153,7 @@ async def main(connection):
             print("  panels after close:", dock._panels, "var:", await shell.async_get_variable("user.claude_panel"),
                   "tab sessions:", [x.session_id for x in (app.get_tab_by_id(tab.tab_id) or tab).sessions])
         check("closing the pane resets the button",
-              await shell.async_get_variable("user.claude_panel") == "closed" and tab.tab_id not in dock._panels)
+              await button_state(shell) == "closed" and tab.tab_id not in dock._panels)
         # The termination notice for a closed pane sometimes never comes; the
         # layout backstop must catch it anyway.
         await dock.toggle(shell)
@@ -158,7 +163,7 @@ async def main(connection):
         await dock.forget_closed_panels()
         check("closed-panel backstop forgets a vanished panel and resets the button",
               tab.tab_id not in dock._panels
-              and await shell.async_get_variable("user.claude_panel") == "closed")
+              and await button_state(shell) == "closed")
         await app.get_session_by_id(real_panel).async_close(force=True)
         await asyncio.sleep(1.0)
         # A pane iTerm2 restored from a previous run: old URL -> replaced by a fresh panel.

@@ -13,8 +13,6 @@ to the user's iTerm2 settings.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import io
 import logging
 import os
 from typing import Dict, Optional
@@ -28,12 +26,11 @@ from .web import EventHub
 log = logging.getLogger(__name__)
 
 STATE_VAR = "user.claude_panel"  # per terminal session: "open" / "closed"
-AGENT_VAR = "user.panel_agent"   # per session: the tab's agent, for the status bar label
-
-# Status bar icon: a window with a pane docked along its bottom. iTerm2 draws
-# it as a template image tinted to the status bar's text color.
-ICON_1X = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAARCAYAAADUryzEAAAA+ElEQVR42p2UQW7CQAxFn0PWhRZUiSNwhK667C24RtXjdMWeI7FoFwgJgdqEKmG6+ROZUUgClryYsf39x/oe49KMYRbaLjOG2yjtaEI14KGn+AeoXE2D9gZsgAIogVPipWJbYBlZm5By4BtYAyud6xbaFfAKfADPwC4GJwq+DHj/XNQXqFOcai2gXN3qliGfganLbwDiIP/EpOpgUCrXUoAAjIHHHgZP/jJ3wQL4FAvrEFDeBoDQxzcoMXgAcxT7CmPuKFI34FdiyVxClwdgn+p6KWFUYhISPyt2BN69Ev0uzOThyhMMOABffhfu2cbs2v7bwD+hGfY/phFCaurDxZoAAAAASUVORK5CYII='
-ICON_2X = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAiCAYAAAA+stv/AAABpElEQVR42u3XvW7UQBQF4M9eJ0HZCClVykjQ0NKg5BFQWmoeBYmC50iZgtegQgJEB0iAaPICIUFhWS/NtWSZ2T97wiKUK43Wsj137tw55/gst7HhKAY+XzVm604oMcq40TLGSjssUcf1GNsDF/+Fi0TuZAFFtOs+XuAYO3G/6Nn2n3iPZ3ibKqK98wL3cB4Jco7veBRrjVIdGGGKl3iCa5zh66KqlwB4hgM8xR5e4yieJY9iHLuvcZoRhM8j5w8ctjqu6ry4E/cKfIqubAWQ+kQVcz9Gzgq73Rfm8XU7jqQYUEDDgjaT6i7wsolHn1zlpqV44wVUS2hU9BShVI61C5jG2U0GbHDSAuLaBYyx36LSEBreXfa5bVRrH5/j9yrUMEdshRLCg9CFEvWiDux2ReNvg7DObEjKviz4v3WgvCEPuLLPrBK8nWb+DrRxMAuH9EcHGpBc4E1UOcnkhBohKvAB31KGpG3JHuLyBizZDI+7lmweJo7wKhxMHWPdxZp513iHkxTultnyQ9wZePYTfJlnyxd1IjcjRn3+epWZGXAb/178BmR+mT0V0bySAAAAAElFTkSuQmCC'
+# The status bar label is "⬓ <agent> ▴/▾". iTerm2 stores a component's function
+# signature in the profile when it's added to the status bar and keeps calling
+# it with that signature, so claude_panel_button must stay (knobs, state): the
+# agent name rides along in the state variable as "open|Claude Code".
+GLYPH = "⬓"  # a pane docked along the bottom; text, so the whole button is clickable
 MAXIMIZE_PANE = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
 
 # iTerm2 shows a URL/navigation bar on browser panes. iTerm2 3.7.7+ has a session
@@ -75,6 +72,7 @@ class Dock:
         self.url = url + "&dock=1"
         self._panels: Dict[str, str] = {}  # tab_id -> panel session_id
         self._agents: Dict[str, str] = {}  # tab_id -> agent name, for the status bar label
+        self._states: Dict[str, str] = {}  # session_id -> "open" / "closed"
         self.default_agent_name = lambda: "Agent"  # set by main: the agent new tabs get
         self.hub = hub  # knows when a docked page connected; holds its load open
         terminal.is_panel = self.is_panel
@@ -103,7 +101,7 @@ class Dock:
             await iterm2.MainMenu.async_select_menu_item(self.connection, MAXIMIZE_PANE)
             if hidden:
                 await panel.async_activate()
-            await _set_state(session, "open" if hidden else "closed")
+            await self._set_state(session, "open" if hidden else "closed")
             return {"state": "open" if hidden else "closed"}
         self._panels.pop(tab.tab_id, None)  # stale: closed by the user
 
@@ -127,9 +125,8 @@ class Dock:
         # page reports its own).
         toolbar = None if keep_toolbar else _hide_toolbar_by_method(panel)
         hidden, _ = await asyncio.gather(toolbar or _none(), _set_colors(panel, colors))
-        await _set_state(session, "open")
-        await _set_state(panel, "open")  # the panel shows the window's status bar while focused
-        await _set_var(panel, AGENT_VAR, self._agents.get(tab.tab_id) or self.default_agent_name())
+        await self._set_state(session, "open")
+        await self._set_state(panel, "open")  # the panel shows the window's status bar while focused
         if window is not None and frame is not None:
             # iTerm2 snaps the window to whole rows after a split, shrinking it a
             # few points each time; put the original size back.
@@ -174,7 +171,13 @@ class Dock:
         self._agents[tab_id] = name
         tab = self.app.get_tab_by_id(tab_id)
         for s in (tab.all_sessions if tab else []):
-            await _set_var(s, AGENT_VAR, name)
+            await self._set_state(s, self._states.get(s.session_id, "closed"))
+
+    async def _set_state(self, session: iterm2.Session, state: str) -> None:
+        """Open/closed for the status bar button, with the tab's agent for its label."""
+        self._states[session.session_id] = state
+        tab_id = session.tab.tab_id if session.tab is not None else ""
+        await _set_var(session, STATE_VAR, f"{state}|{self._agents.get(tab_id) or self.default_agent_name()}")
 
     async def register_status_bar_button(self) -> None:
         """A status bar component (panel icon + "Copilot ▴/▾", the tab's agent) that
@@ -183,15 +186,13 @@ class Dock:
         component = iterm2.StatusBarComponent(
             short_description="Agent panel",
             detailed_description="Show or hide the agent panel below this session (⌃⇧.)",
-            knobs=[], exemplar="Claude Code ▴", update_cadence=None,
-            identifier="com.intelligent-iterm.toggle",
-            icons=_icons())
+            knobs=[], exemplar=f"{GLYPH} Claude Code ▴", update_cadence=None,
+            identifier="com.intelligent-iterm.toggle")
 
         @iterm2.StatusBarRPC
-        async def claude_panel_button(knobs, state=iterm2.Reference(STATE_VAR + "?"),
-                                      agent=iterm2.Reference(AGENT_VAR + "?")):
-            name = agent or self.default_agent_name()
-            return f"{name} ▾" if state == "open" else f"{name} ▴"
+        async def claude_panel_button(knobs, state=iterm2.Reference(STATE_VAR + "?")):
+            # Keep this signature: see GLYPH above.
+            return status_label(state, self.default_agent_name())
 
         async def onclick(session_id: str) -> None:
             session = self.app.get_session_by_id(session_id)
@@ -249,7 +250,7 @@ class Dock:
             if panel_id == gone:
                 del self._panels[tab_id]
                 for s in (tab.sessions if tab else []):
-                    await _set_state(s, "closed")
+                    await self._set_state(s, "closed")
             elif tab is None:
                 del self._panels[tab_id]  # whole tab closed
             elif not any(s.session_id != gone and not self.is_panel(s.session_id)
@@ -331,12 +332,6 @@ async def _color_properties(session: iterm2.Session) -> iterm2.LocalWriteOnlyPro
     return colors
 
 
-def _icons() -> list:
-    # iterm2's Icon() prints the raw PNG bytes; keep them out of the log.
-    with contextlib.redirect_stdout(io.StringIO()):
-        return [iterm2.StatusBarComponent.Icon(1, ICON_1X), iterm2.StatusBarComponent.Icon(2, ICON_2X)]
-
-
 async def _set_var(session: iterm2.Session, name: str, value: str) -> None:
     try:
         await session.async_set_variable(name, value)
@@ -344,8 +339,7 @@ async def _set_var(session: iterm2.Session, name: str, value: str) -> None:
         log.info("could not set %s", name, exc_info=True)
 
 
-async def _set_state(session: iterm2.Session, state: str) -> None:
-    try:
-        await session.async_set_variable(STATE_VAR, state)
-    except Exception:  # noqa: BLE001 - only affects the status bar label
-        log.info("could not set %s", STATE_VAR, exc_info=True)
+def status_label(state: Optional[str], default_agent: str) -> str:
+    """The status bar button's text from the state variable ("open|Claude Code")."""
+    open_closed, _, agent = (state or "closed").partition("|")
+    return f"{GLYPH} {agent or default_agent} {'▾' if open_closed == 'open' else '▴'}"

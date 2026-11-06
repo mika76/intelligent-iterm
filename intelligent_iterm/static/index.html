@@ -40,6 +40,7 @@
   }
   button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: .45; cursor: default; }
+  .proposal .row button.sel, .card .row button.sel,
   .proposal .row button:focus-visible, .card .row button:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
@@ -228,10 +229,17 @@ function el(tag, cls, text) {
   return e;
 }
 function nearBottom(px) { return log.scrollHeight - log.scrollTop - log.clientHeight < px; }
+// Follow the bottom while you're there, also when something grows after it was
+// added (a card's buttons, streamed text). Scrolling up stops following;
+// scrolling back down, or sending a message, starts it again.
+let following = true;
+function toBottom() { log.scrollTop = log.scrollHeight; following = true; }
+log.addEventListener("scroll", () => { following = nearBottom(30); });
+const keepAtBottom = () => { if (following) log.scrollTop = log.scrollHeight; };
+new MutationObserver(keepAtBottom).observe(log, { childList: true, subtree: true, characterData: true });
+new ResizeObserver(keepAtBottom).observe(log);
 function add(node) {
-  const stick = nearBottom(40);
   log.insertBefore(node, thinkingEl && thinkingEl.parentNode ? thinkingEl : null);
-  if (stick) log.scrollTop = log.scrollHeight;
   return node;
 }
 function note(text, cls) { return add(el("div", "note" + (cls ? " " + cls : ""), text)); }
@@ -452,7 +460,7 @@ function handle(ev) {
       agentEl = null;
       const m = add(el("div", "msg user", ev.text));
       if (ev.context) m.appendChild(el("span", "ctx", ev.context));
-      log.scrollTop = log.scrollHeight;  // a new message: back to the bottom, even if you'd scrolled up
+      toBottom();  // a new message: back to the bottom, even if you'd scrolled up
       setBusy(true);
       break;
     }
@@ -460,7 +468,6 @@ function handle(ev) {
       if (!agentEl) { agentEl = add(el("div", "msg agent")); agentText = ""; }
       agentText += ev.text;
       renderMarkdown(agentText, agentEl);
-      if (nearBottom(120)) log.scrollTop = log.scrollHeight;
       break;
     case "tool": { // one line per tool call, updated in place
       let line = document.getElementById("tool-" + ev.id);
@@ -664,7 +671,7 @@ function pickSlash() {
 function fitInput() { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
 input.addEventListener("input", () => { slashSel = 0; updateSlash(); fitInput(); });
 input.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowUp" && !input.value && !slashItems.length && focusWaitingCard()) {
+  if (!e.isComposing && cardKey(e)) {
     e.preventDefault();
     return;
   }
@@ -691,9 +698,12 @@ document.addEventListener("keydown", (e) => {
   }
 });
 // ---- keyboard for waiting cards (like Intelligent Terminal's pane) -------------
-// ↑ from an empty input moves into the newest card that is waiting for an answer;
-// ←/→ (or ↑/↓) move between its buttons, Enter or Space presses one, Esc goes back
-// to the input. On a permission card, Y and N allow and deny.
+// ↑ in the empty input selects the newest card that is waiting for an answer;
+// ←/→ (or ↑/↓) move the selection over its buttons, Enter presses the selected one,
+// Esc (or typing) leaves it. On a permission card, Y and N allow and deny. The
+// cursor stays in the input throughout: WebKit is unreliable about focusing
+// buttons, so the selection is the panel's own highlight, not browser focus.
+let nav = null;  // { card, i }: the card being answered from the keyboard
 function keyHint(extra) {
   return el("span", "keyhint", "↑ keys" + (extra ? " · " + extra : ""));
 }
@@ -702,33 +712,49 @@ function waitingCard() {
     .filter((c) => c.querySelector(".row button:not(:disabled)"));
   return cards[cards.length - 1] || null;
 }
-function focusWaitingCard() {
-  const card = waitingCard();
-  if (!card) return false;
-  const first = card.querySelector(".row button:not(:disabled)");
-  first.focus();
-  first.scrollIntoView({ block: "nearest" });
-  return true;
+function navButtons() {
+  return nav ? [...nav.card.querySelectorAll(".row button:not(:disabled)")] : [];
 }
-log.addEventListener("keydown", (e) => {
-  const b = e.target;
-  const row = b.tagName === "BUTTON" && b.closest(".proposal .row, .card .row");
-  if (!row || e.metaKey || e.ctrlKey || e.altKey) return;
-  const buttons = [...row.querySelectorAll("button:not(:disabled)")];
-  const i = buttons.indexOf(b);
-  const move = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
-  if (move) {
-    e.preventDefault();
-    buttons[Math.max(0, Math.min(buttons.length - 1, i + move))].focus();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    focusInputAtEnd();
-  } else if (row.closest(".card") && "yYnN".includes(e.key) && e.key.length === 1) {
-    const want = e.key.toLowerCase() === "y" ? "allow" : "reject";
-    const pick = buttons.find((x) => x.dataset.kind.startsWith(want));
-    if (pick) { e.preventDefault(); pick.click(); }
+function navShow() {
+  log.querySelectorAll(".row button.sel").forEach((b) => b.classList.remove("sel"));
+  const buttons = navButtons();
+  if (!buttons.length) { nav = null; return; }
+  nav.i = Math.max(0, Math.min(buttons.length - 1, nav.i));
+  buttons[nav.i].classList.add("sel");
+  buttons[nav.i].scrollIntoView({ block: "nearest" });
+}
+function navEnd() { nav = null; navShow(); }
+input.addEventListener("blur", () => { if (nav) navEnd(); });
+// Handles a key in the input while a card is selected (or ↑ to select one).
+// Returns true when the key was for the card.
+function cardKey(e) {
+  if (!nav) {
+    if (e.key !== "ArrowUp" || input.value || slashItems.length || e.shiftKey || e.metaKey || e.altKey) return false;
+    const card = waitingCard();
+    if (!card) return false;
+    nav = { card, i: 0 };
+    navShow();
+    return true;
   }
-});
+  if (!navButtons().length) { navEnd(); return false; }  // answered meanwhile
+  const move = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+  if (move) { nav.i += move; navShow(); return true; }
+  if (e.key === "Enter") {
+    const b = navButtons()[nav.i];
+    b.click();
+    if (!b.classList.contains("confirm")) navEnd();  // a risky Run waits for a second Enter
+    else navShow();
+    return true;
+  }
+  if (e.key === "Escape") { navEnd(); return true; }
+  if (nav.card.classList.contains("card") && e.key.length === 1 && "yYnN".includes(e.key)) {
+    const want = e.key.toLowerCase() === "y" ? "allow" : "reject";
+    const pick = navButtons().find((x) => (x.dataset.kind || "").startsWith(want));
+    if (pick) { pick.click(); navEnd(); return true; }
+  }
+  navEnd();  // anything else: back to typing
+  return false;
+}
 
 // Typing anywhere in the panel goes to the input: clicking a message, a card or a
 // button takes the focus away from it. Shortcuts (⌘C on a selection…) are left alone.

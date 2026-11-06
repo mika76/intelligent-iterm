@@ -52,7 +52,7 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
 
 1. **Chat panel** with streamed replies, in either of two places:
    - **Docked below the terminal** (like Intelligent Terminal's agent pane). Open or close
-     it for the current tab with **Ctrl+Shift+.**, the status bar button (a panel icon and the tab's agent, e.g. **Claude Code ▴**),
+     it for the current tab with **Ctrl+Shift+.**, the status bar button (**⬓ Claude Code ▴**, showing the tab's agent),
      `hide` in the panel, or `dock ↓` in the toolbelt. To add the button, go to iTerm2 >
      Settings > Profiles > Session > *Configure Status Bar* and drag in **Agent panel**.
      It only appears in the picker while the script is running. It's an iTerm2 browser split pane, created with per-session settings,
@@ -129,9 +129,9 @@ a card or a button; ⌘V pastes there too. Shortcuts such as ⌘C on selected te
 Sending a message scrolls back to the bottom.
 
 Cards work from the keyboard, like Intelligent Terminal's pane: **↑** in the empty input
-moves to the newest card waiting for an answer, **←/→** move between its buttons,
-**Enter** presses one and **Esc** goes back to the input. On a permission card, **Y**
-allows and **N** denies.
+selects the newest card waiting for an answer, **←/→** move between its buttons,
+**Enter** presses the selected one, and **Esc** (or just typing) leaves the card. On a
+permission card, **Y** allows and **N** denies. The cursor stays in the input throughout.
 
 The panel takes its colors and font from the active session's iTerm2 profile, and updates
 when you switch to a session with a different profile, so it looks like part of the terminal.
