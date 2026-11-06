@@ -32,17 +32,29 @@ iTerm2 toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Python, iTe
    - **In the toolbelt** on the right (View > Toolbelt > Claude).
 
    Both show the same conversation.
-2. **Attach context** (on by default) sends the active session's directory, last command,
-   exit status and output with each message. If shell integration has no command
-   history, it sends the last 60 lines of the terminal instead. **+ screen** also attaches
-   the visible screen once, with the next message.
-3. **Explain this error**: when a command in the active session exits non-zero, a status
-   bar above the input shows it with an **Explain** button, which sends the command, exit
-   status and output to Claude.
-4. **Insert**: each single-line command that Claude suggests in a `bash` block gets an
-   Insert button. It types the command at the prompt of the active session and **never
-   presses Enter**. Text containing newlines or control characters is refused, both in the
-   UI and on the server, so multi-line suggestions only offer Copy.
+2. **context** (header, on by default) sends the active session's directory, shell, window
+   title, last command, exit status and output with each message, as JSON. If shell
+   integration has no command history, it sends the last 60 lines of the terminal instead.
+   **screen** also attaches the visible screen once, with the next message. Claude can
+   also read the terminal itself with its `read_terminal` tool.
+3. **Explain / fix**: when a command in the active session exits non-zero, a status bar
+   above the input shows it with an **Explain** button (or type `/explain`). Claude works
+   out what you were trying to do, says why it failed, and proposes the corrected command,
+   or asks when the goal isn't clear.
+4. **Proposed commands**: Claude proposes a command with its `propose_command` tool, and
+   the panel shows it as a card with **Insert ⇥** (type it at your prompt, no Enter),
+   **Run ⏎** (type it and press Enter) and **Dismiss**. Claude is told which you chose.
+   Commands only go to your terminal when you click; multi-line commands and control
+   characters are refused. Single-line commands in `bash` blocks also get Insert and Copy.
+5. **/ commands**: type `/` for the panel's own (`/new`, `/explain`, `/screen`, `/hide`)
+   and Claude Code's (your skills and custom commands).
+
+The header shows the agent, adapter version and model, like Intelligent Terminal's pane.
+
+The agent prompts (system prompt and the Explain/fix instructions) are adapted from
+[Microsoft Intelligent Terminal](https://github.com/microsoft/intelligent-terminal)'s
+`terminal-agent.md` and `auto-fix.md` (MIT). Its tools reach the panel through a small
+MCP server at `/mcp` on the panel's local server.
 
 The panel takes its colors and font from the active session's iTerm2 profile, and updates
 when you switch to a session with a different profile, so it looks like part of the terminal.
@@ -132,6 +144,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 | `intelligent_iterm/terminal.py` | iTerm2 API: context, failed-command detection, safe insert |
 | `intelligent_iterm/panel.py` | Turns UI actions into ACP prompts and agent updates into UI events |
 | `intelligent_iterm/acp.py` | Minimal ACP (JSON-RPC over stdio) client |
+| `intelligent_iterm/mcp.py` | Minimal MCP server for the agent's `propose_command` / `read_terminal` tools |
 | `intelligent_iterm/web.py` | Local HTTP + Server-Sent Events server |
 | `intelligent_iterm/config.py` | Finds node, claude and the adapter outside your shell's PATH |
 | `intelligent_iterm/static/index.html` | The chat UI (no build step) |
@@ -142,7 +155,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   random token generated at each launch, and requests with a foreign `Host` header are
   rejected. Without this, any web page in your browser could make the panel type into
   your terminal.
-- Insert never sends Enter, newlines, or control characters.
+- The agent's MCP endpoint (`/mcp`) needs the same token; it's passed to Claude Code in
+  the session's MCP config, not stored anywhere. Its two tools are pre-allowed for that
+  session only, because they ask you themselves.
+- Nothing is typed into your terminal without a click. Insert never sends Enter; Run sends
+  Enter once, for the command shown on the card. Newlines and control characters are refused.
 
 ## Known limitations
 
