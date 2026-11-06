@@ -30,7 +30,7 @@ async def main(connection):
     panel = Panel(hub, term, FAKE_AGENT, dict(os.environ))
     web = WebServer("dockcheck", hub, panel.routes())
     await web.start()
-    dock = Dock(connection, app, term, web.url, page_ready=hub.wait_pinned)
+    dock = Dock(connection, app, term, web.url, hub=hub)
     focus_task = asyncio.ensure_future(term.watch_focus(lambda t: None))
     closed_task = asyncio.ensure_future(dock.watch_closed_panels())
     try:

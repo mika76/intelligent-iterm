@@ -14,13 +14,16 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 log = logging.getLogger(__name__)
 
 Handler = Callable[[Dict[str, Any]], Awaitable[Any]]
 STATIC = Path(__file__).parent / "static"
 HISTORY_LIMIT = 1000
+HOLD_TIMEOUT = 5.0  # longest a docked page is kept loading by /hold
+PIXEL_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00"
+             b"\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
 
 
 MAIN = "main"  # the conversation key when the terminal has no tabs (tests, dev server)
@@ -40,6 +43,7 @@ class EventHub:
         self._sticky: Dict[str, Dict[str, Any]] = {}  # latest event per key, e.g. theme
         self.active = MAIN  # what followers show
         self.resolve_active: Optional[Callable[[], str]] = None  # set by Panel: the active tab now
+        self._holds: Dict[str, asyncio.Event] = {}  # tab -> release of its page's /hold
 
     def get_sticky(self, key: str) -> Optional[Dict[str, Any]]:
         return self._sticky.get(key)
@@ -96,6 +100,24 @@ class EventHub:
             await asyncio.sleep(0.02)
         return True
 
+    def hold(self, conv: str) -> None:
+        """Keep the next docked page for `conv` loading (its /hold image pending)
+        until release(): see Dock.toggle."""
+        self._holds[conv] = asyncio.Event()
+
+    def release(self, conv: str) -> None:
+        event = self._holds.pop(conv, None)
+        if event is not None:
+            event.set()
+
+    async def wait_hold(self, conv: str, timeout: float) -> None:
+        event = self._holds.get(conv)
+        if event is not None:
+            try:
+                await asyncio.wait_for(event.wait(), timeout)
+            except asyncio.TimeoutError:
+                self._holds.pop(conv, None)
+
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._clients.pop(q, None)
 
@@ -151,12 +173,16 @@ class WebServer:
                 return await self._send(writer, 403, b"bad host", "text/plain")
 
             if method == "GET" and url.path == "/":
-                body = render_page(self.hub.get_sticky("theme"))
+                body = render_page(self.hub.get_sticky("theme"), query)
                 return await self._send(writer, 200, body, "text/html; charset=utf-8")
 
             supplied = headers.get("x-token") or (query.get("t") or [""])[0]
             if not hmac.compare_digest(supplied, self.token):
                 return await self._send(writer, 403, b"bad token", "text/plain")
+
+            if method == "GET" and url.path == "/hold":
+                await self.hub.wait_hold((query.get("tab") or [""])[0], HOLD_TIMEOUT)
+                return await self._send(writer, 200, PIXEL_GIF, "image/gif")
 
             if method == "GET" and url.path == "/events":
                 return await self._sse(writer, (query.get("tab") or [""])[0] or None)
@@ -246,10 +272,20 @@ def theme_vars(theme: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
-def render_page(theme_event: Optional[Dict[str, Any]]) -> bytes:
+def render_page(theme_event: Optional[Dict[str, Any]],
+                query: Optional[Dict[str, List[str]]] = None) -> bytes:
     """The chat page, with the current theme baked into <html> so the very first
-    paint already matches the terminal (no white flash before SSE delivers it)."""
+    paint already matches the terminal (no white flash before SSE delivers it).
+
+    A docked page also gets a hidden /hold image, which keeps the page "loading"
+    while the dock asks for it: iTerm2's Minimal theme tints the window from the
+    page color WebKit reports when loading finishes, and that is WebKit's light
+    default unless the page has been drawn on screen first."""
     page = (STATIC / "index.html").read_text()
+    query = query or {}
+    if (query.get("dock") or [""])[0] == "1" and query.get("tab") and query.get("t"):
+        src = "/hold?" + urlencode({"t": query["t"][0], "tab": query["tab"][0]})
+        page = page.replace("</body>", f'<img hidden alt="" src="{html.escape(src)}">\n</body>', 1)
     if theme_event and theme_event.get("vars"):
         style = ";".join(f"{k}:{v}" for k, v in theme_event["vars"].items())
         page = page.replace('<html lang="en">',

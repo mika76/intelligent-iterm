@@ -106,7 +106,7 @@ async def main(connection: iterm2.Connection) -> None:
     await iterm2.async_register_web_view_tool(
         connection, "Claude", TOOL_ID, False, web.url)
     log.info("registered toolbelt tool %s", TOOL_ID)
-    dock = Dock(connection, app, terminal, web.url, page_ready=hub.wait_pinned)
+    dock = Dock(connection, app, terminal, web.url, hub=hub)
 
     async def toggle_dock(_body: dict) -> dict:
         return await dock.toggle()

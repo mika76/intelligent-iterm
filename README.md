@@ -216,7 +216,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **Docking:** the toolbelt only goes on the right. The bottom dock splits the *active pane*,
   not the whole tab, because the API can't split a tab's root. With several panes in a tab
   it sits under the one you were in. The pane is created the first time you open it in a
-  tab, which takes a moment: the pane loads behind the maximized terminal and appears once its page has drawn, so there's no white flash; after that, hiding it maximizes the
+  tab, which takes about half a second: the pane loads behind the maximized terminal and appears once its page has connected, already in the terminal's colors. iTerm2 only loads a browser pane that has been on screen, so the new pane blinks for a frame or two first; after that, hiding it maximizes the
   terminal pane (View > Maximize Active Pane) so the panel stays loaded and reappears
   instantly. Typing `exit` in the terminal closes the panel with it. Because the tab has
   two panes, iTerm2 asks before closing it with ⌘W. It opens at iTerm2's default split (about half),
