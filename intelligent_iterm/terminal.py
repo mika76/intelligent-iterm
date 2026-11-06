@@ -11,13 +11,17 @@ from typing import Any, Callable, Dict, List, Optional
 
 import iterm2
 
+from . import safety
+
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_LINES = 200   # per command
 RECENT_LINES = 60        # fallback when shell integration isn't available
 KEEP_FAILURES = 50
-# Anything that could submit or alter the command line: newlines, ESC, ^C, etc.
-_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+# Anything that could submit or alter the command line except newlines, which
+# are only sent inside a bracketed paste: ESC, CR, ^C, etc.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+PASTE_START, PASTE_END = "\x1b[200~", "\x1b[201~"
 
 
 class ItermTerminal:
@@ -256,17 +260,35 @@ class ItermTerminal:
 
     # ---- typing into the terminal ---------------------------------------------
 
+    async def multiline_refusal(self, session_id: Optional[str] = None) -> Optional[str]:
+        """None if a multi-line command can be pasted at this session's prompt; else why not."""
+        session = (self.app.get_session_by_id(session_id) if session_id else None) or self.active_session()
+        if session is None:
+            return "no active terminal session"
+        shell = await session.async_get_variable("shell") or await self._shell(session)
+        return safety.multiline_refusal(shell, await session.async_get_variable("jobName"))
+
     async def insert(self, text: str, session_id: Optional[str] = None, run: bool = False) -> None:
         """Type `text` at the prompt of `session_id` (default: the active session).
-        Only presses Enter when `run` is set (the user clicked Run on a proposal)."""
-        command = text.replace("\t", " ").rstrip()
+        Only presses Enter when `run` is set (the user clicked Run on a proposal).
+        A multi-line command goes in as one bracketed paste, so the shell keeps it
+        in the edit buffer; that's only done where bracketed paste is on (zsh, fish)."""
+        command = text.replace("\r\n", "\n").rstrip()
+        multiline = "\n" in command
+        if not multiline:
+            command = command.replace("\t", " ")
         if not command.strip():
             raise ValueError("nothing to insert")
         if _CONTROL.search(command):
-            raise ValueError("refusing to insert text with newlines or control characters")
+            raise ValueError("refusing to insert text with control characters")
         session = (self.app.get_session_by_id(session_id) if session_id else None) or self.active_session()
         if session is None:
             raise RuntimeError("no active terminal session")
+        if multiline:
+            why = await self.multiline_refusal(session.session_id)
+            if why:
+                raise ValueError(why)
+            command = PASTE_START + command + PASTE_END
         await session.async_send_text(command + ("\r" if run else ""), suppress_broadcast=True)
         await session.async_activate()  # focus the terminal so Enter is one keypress away
 

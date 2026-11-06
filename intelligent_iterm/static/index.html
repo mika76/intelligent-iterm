@@ -115,6 +115,9 @@
   .proposal pre::before { content: "$ "; color: var(--dim); }
   .proposal .row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
   .proposal .outcome { color: var(--dim); font-size: var(--small); }
+  .proposal.risky { border-left-color: var(--red); }
+  .proposal .risk { color: var(--red); font-size: var(--small); margin-bottom: 4px; }
+  .proposal button.confirm { border-color: var(--red); color: var(--red); }
   .doctor { border: 1px solid var(--border); border-left: 2px solid var(--yellow); padding: 6px 8px; }
   .doctor.allok { border-left-color: var(--green); }
   .doctor .head { color: var(--dim); font-size: var(--small); margin-bottom: 4px; }
@@ -278,16 +281,12 @@ function codeBlock(lang, code, done) {
   bar.appendChild(copyBtn);
   if (SHELL_LANGS.includes(lang.toLowerCase()) && cmd.trim()) {
     const ins = el("button", "primary", "insert ⇥");
-    if (cmd.includes("\n")) {
-      ins.disabled = true;
-      ins.title = "Multi-line commands can't be inserted safely; use copy";
-    } else {
-      ins.title = "Type into the active terminal session (does not press Enter)";
-      ins.onclick = async () => {
-        const r = await api("/api/insert", { text: cmd });
-        if (r.ok) ins.textContent = "inserted ✓";
-      };
-    }
+    ins.title = "Type into the active terminal session (does not press Enter)"
+      + (cmd.includes("\n") ? "; multi-line works in zsh and fish" : "");
+    ins.onclick = async () => {
+      const r = await api("/api/insert", { text: cmd });
+      if (r.ok) ins.textContent = "inserted ✓";
+    };
     bar.appendChild(ins);
   }
   box.appendChild(bar);
@@ -478,6 +477,11 @@ function handle(ev) {
       agentEl = null;  // text after the card starts a new message below it
       const card = add(el("div", "proposal"));
       card.id = "prop-" + ev.id;
+      const risks = ev.risks || [];
+      if (risks.length) {
+        card.classList.add("risky");
+        card.appendChild(el("div", "risk", "⚠ " + risks.join(" · ")));
+      }
       if (ev.reason) card.appendChild(el("div", "reason", ev.reason));
       card.appendChild(el("pre", "", ev.command));
       const row = card.appendChild(el("div", "row"));
@@ -486,7 +490,17 @@ function handle(ev) {
        ["dismiss", "Dismiss", "link", ""]].forEach(([action, label, cls, title]) => {
         const b = el("button", cls, label);
         b.title = title;
-        b.onclick = () => api("/api/proposal", { id: ev.id, action });
+        let armed = null;
+        b.onclick = () => {
+          // A risky command needs a second click to run.
+          if (action === "run" && risks.length && !armed) {
+            b.textContent = "Confirm run ⏎"; b.classList.add("confirm");
+            armed = setTimeout(() => { armed = null; b.textContent = label; b.classList.remove("confirm"); }, 4000);
+            return;
+          }
+          clearTimeout(armed);
+          api("/api/proposal", { id: ev.id, action });
+        };
         row.appendChild(b);
       });
       break;

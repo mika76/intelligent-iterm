@@ -53,7 +53,7 @@ async def main(connection):
 
         # Trailing newlines are stripped (checked below: nothing executes);
         # embedded control characters are refused outright.
-        for bad in ("a\nb", "a\rb", "echo \x1b[A", "x\x03"):
+        for bad in ("a\rb", "echo \x1b[A", "x\x03"):
             try:
                 await term.insert(bad)
                 check(f"reject {bad!r}", False)
@@ -68,6 +68,27 @@ async def main(connection):
         ran = [r for r in rows if r.strip() == f"{MARK}-inserted"]
         check("insert typed at prompt", typed, rows[-5:])
         check("insert NOT executed", not ran, ran)
+
+        # Multi-line: one bracketed paste, kept in the zsh buffer until Enter.
+        await session.async_send_text("\x15")
+        if await term.multiline_refusal(session.session_id) is None:
+            await term.insert(f"echo {MARK}-one\necho {MARK}-two")
+            await asyncio.sleep(1.0)
+            screen = await session.async_get_screen_contents()
+            rows = [screen.line(i).string for i in range(screen.number_of_lines)]
+            check("multi-line typed at prompt", any(f"echo {MARK}-two" in r for r in rows), rows[-6:])
+            check("multi-line NOT executed", not any(r.strip() == f"{MARK}-one" for r in rows), rows[-6:])
+            await session.async_send_text("\x03")  # ^C drops the whole buffer
+            await asyncio.sleep(0.5)
+            await term.insert(f"echo {MARK}-three\necho {MARK}-four", run=True)
+            await asyncio.sleep(1.0)
+            screen = await session.async_get_screen_contents()
+            rows = [screen.line(i).string for i in range(screen.number_of_lines)]
+            check("multi-line Run executes every line",
+                  any(r.strip() == f"{MARK}-three" for r in rows) and any(r.strip() == f"{MARK}-four" for r in rows),
+                  rows[-6:])
+        else:
+            print("SKIP multi-line:", await term.multiline_refusal(session.session_id))
     finally:
         watcher.cancel()
         await session.async_send_text("\x15")  # ^U clear the line before closing

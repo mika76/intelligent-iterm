@@ -16,7 +16,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from . import doctor
+from . import doctor, safety
 from .acp import AcpClient
 from .mcp import McpServer, Tool, ToolError
 from .web import MAIN, EventHub
@@ -44,7 +44,8 @@ when you need fresher context.
 ## Proposing a command
 
 When running a command in the user's terminal is the outcome they want, call
-`propose_command` with one single-line command and a short reason. The user
+`propose_command` with one command (a single line when possible; multi-line only
+in zsh or fish, e.g. for a heredoc) and a short reason. The user
 inserts it at their prompt, runs it, or dismisses it in the panel, and the tool
 returns their choice. Propose at most one command per turn; when it returns, end
 the turn with at most one short sentence. You don't see the command's output, so
@@ -81,7 +82,7 @@ corrected command.
 """
 
 MAX_OUTPUT_CHARS = 12000
-_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # newlines are checked separately
 
 
 class Conversation:
@@ -215,7 +216,8 @@ class Conversation:
         session_id = self.target_session or getattr(self.panel.terminal, "active_session_id", lambda: None)()
         fut = asyncio.get_event_loop().create_future()
         self.proposals[pid] = {"command": command, "session_id": session_id, "future": fut}
-        self.publish({"type": "proposal", "id": pid, "command": command, "reason": reason})
+        self.publish({"type": "proposal", "id": pid, "command": command, "reason": reason,
+                      "risks": safety.risks(command)})
         try:
             outcome = await fut
         finally:
@@ -428,11 +430,13 @@ class Panel:
     def _tools(self) -> List[Tool]:
         return [
             Tool("propose_command",
-                 "Propose one single-line shell command for the user's iTerm2 terminal. The user "
-                 "sees it in the panel and chooses to insert it at their prompt, run it, or dismiss "
-                 "it. Returns their choice: inserted, ran or dismissed. Use the terminal's shell syntax.",
+                 "Propose one shell command for the user's iTerm2 terminal. The user sees it in the "
+                 "panel and chooses to insert it at their prompt, run it, or dismiss it. Returns their "
+                 "choice: inserted, ran or dismissed. Use the terminal's shell syntax. Prefer one line; "
+                 "a multi-line command (heredoc, loop) is accepted in zsh and fish and refused otherwise. "
+                 "Destructive commands are shown with a warning and need a second click to run.",
                  {"type": "object", "required": ["command", "reason"], "properties": {
-                     "command": {"type": "string", "description": "One line; join steps with && or ;"},
+                     "command": {"type": "string", "description": "Prefer one line; join steps with && or ;"},
                      "reason": {"type": "string", "description": "Why, in one short sentence"}}},
                  self._propose),
             Tool("read_terminal",
@@ -449,9 +453,16 @@ class Panel:
         reason = str(args.get("reason") or "").strip()
         if not command:
             raise ToolError("command is empty")
+        command = command.replace("\r\n", "\n")
         if _CONTROL.search(command):
-            raise ToolError("Propose a single line without control characters; join steps with && or ;")
-        outcome = await self.conversation(conv).propose(command, reason)
+            raise ToolError("Propose the command without control characters (newlines are fine in zsh and fish)")
+        c = self.conversation(conv)
+        if "\n" in command:
+            check = getattr(self.terminal, "multiline_refusal", None)
+            why = await check(c.target_session) if check else None
+            if why:
+                raise ToolError(why)
+        outcome = await c.propose(command, reason)
         return {"inserted": "The user inserted the command at their prompt (not run yet).",
                 "ran": "The user ran the command in their terminal.",
                 "dismissed": "The user dismissed the proposal."}[outcome]

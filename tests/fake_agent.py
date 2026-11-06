@@ -85,7 +85,9 @@ for line in sys.stdin:
         if asked.startswith("propose") and MCP:
             mcp_call("initialize", {"protocolVersion": "2025-06-18"})
             res = mcp_call("tools/call", {"name": "propose_command",
-                                          "arguments": {"command": "ls -la", "reason": "list files"}})
+                                          "arguments": {"command": "rm -rf build && npm run compile", "reason": "clean rebuild"}
+                                          if asked.startswith("propose risky") else
+                                          {"command": "ls -la", "reason": "list files"}})
             update("s1", {"sessionUpdate": "agent_message_chunk", "content": {
                 "type": "text", "text": " tool: " + res["result"]["content"][0]["text"]}})
         if "suggest" in text:

@@ -79,8 +79,13 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
 4. **Proposed commands**: Claude proposes a command with its `propose_command` tool, and
    the panel shows it as a card with **Insert ⇥** (type it at your prompt, no Enter),
    **Run ⏎** (type it and press Enter) and **Dismiss**. Claude is told which you chose.
-   Commands only go to your terminal when you click; multi-line commands and control
-   characters are refused. Single-line commands in `bash` blocks also get Insert and Copy.
+   Commands only go to your terminal when you click. Destructive commands (`rm -rf`,
+   `sudo`, force-push, `git reset --hard`, `curl … | sh` and the like) get a red warning
+   saying what they do, and **Run** needs a second click. Multi-line commands (heredocs,
+   loops) go in as one bracketed paste, so they wait in the shell's buffer until you press
+   Enter; that's only done in zsh and fish, and only when the shell itself is in front
+   (not a REPL or other program). Control characters are refused. Commands in `bash`
+   blocks also get Insert and Copy.
 5. **/ commands**: type `/` for the panel's own (`/new`, `/explain`, `/screen`, `/hide`,
    `/doctor`) and Claude Code's (your skills and custom commands).
 6. **Setup checks**: when the panel opens it checks Node, the adapter, the Claude Code
@@ -209,7 +214,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   the session's MCP config, not stored anywhere. Its two tools are pre-allowed for that
   session only, because they ask you themselves.
 - Nothing is typed into your terminal without a click. Insert never sends Enter; Run sends
-  Enter once, for the command shown on the card. Newlines and control characters are refused.
+  Enter once, for the command shown on the card, and asks for a second click when the
+  command looks destructive. That check is a pattern list, not a sandbox: read what you run.
+- Multi-line text is only sent as a bracketed paste, and only to zsh or fish when the shell
+  is the foreground job; otherwise it's refused, so lines can't run one by one. Other
+  control characters are always refused.
 
 ## Known limitations
 

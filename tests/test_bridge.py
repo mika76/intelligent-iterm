@@ -73,7 +73,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         status, _ = await http(self.port, "POST", "/api/send", {"text": "propose a fix"}, token="secret")
         self.assertEqual(status, 200)
         prop = (await self.events_until("proposal"))[-1]
-        self.assertEqual((prop["command"], prop["reason"]), ("ls -la", "list files"))
+        self.assertEqual((prop["command"], prop["reason"], prop["risks"]), ("ls -la", "list files", []))
         status, _ = await http(self.port, "POST", "/api/proposal", {"id": prop["id"], "action": "insert"},
                                token="secret")
         self.assertEqual(status, 200)
@@ -94,7 +94,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
                                {"jsonrpc": "2.0", "method": "notifications/initialized"}, token="secret")
         self.assertEqual(status, 202)
         status, body = await http(self.port, "POST", "/mcp", {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                                  "params": {"name": "propose_command", "arguments": {"command": "a\nb", "reason": ""}}},
+                                  "params": {"name": "propose_command", "arguments": {"command": "a\rb", "reason": ""}}},
                                   token="secret")
         self.assertTrue(json.loads(body)["result"]["isError"])
 
