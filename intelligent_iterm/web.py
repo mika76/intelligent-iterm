@@ -83,6 +83,19 @@ class EventHub:
         self._clients[q] = (shown, conv is not None)
         return q, self._backlog(shown)
 
+    def has_pinned(self, conv: str) -> bool:
+        """A page showing `conv` for good (a docked pane) is connected."""
+        return any(shown == conv and pinned for shown, pinned in self._clients.values())
+
+    async def wait_pinned(self, conv: str, timeout: float) -> bool:
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout
+        while not self.has_pinned(conv):
+            if loop.time() >= end:
+                return False
+            await asyncio.sleep(0.02)
+        return True
+
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._clients.pop(q, None)
 

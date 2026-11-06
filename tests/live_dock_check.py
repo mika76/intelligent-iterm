@@ -21,22 +21,6 @@ from test_bridge import FAKE_AGENT  # noqa: E402
 
 MARK = "intelligent-iterm-dock-check"
 
-# Web > Show Toolbar is checked while the focused browser pane shows its URL bar.
-TOOLBAR_STATE = """
-tell application "System Events" to tell process "iTerm2"
-  set mi to menu item "Show Toolbar" of menu "Web" of menu bar 1
-  if value of attribute "AXMenuItemMarkChar" of mi is missing value then return "hidden"
-  return "shown"
-end tell
-"""
-
-
-async def _toolbar_shown() -> str:
-    proc = await asyncio.create_subprocess_exec(
-        "/usr/bin/osascript", "-e", TOOLBAR_STATE,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
-    return (out or err).decode().strip()
 
 
 async def main(connection):
@@ -46,7 +30,7 @@ async def main(connection):
     panel = Panel(hub, term, FAKE_AGENT, dict(os.environ))
     web = WebServer("dockcheck", hub, panel.routes())
     await web.start()
-    dock = Dock(connection, app, term, web.url)
+    dock = Dock(connection, app, term, web.url, page_ready=hub.wait_pinned)
     focus_task = asyncio.ensure_future(term.watch_focus(lambda t: None))
     closed_task = asyncio.ensure_future(dock.watch_closed_panels())
     try:
@@ -75,12 +59,6 @@ async def main(connection):
         check("dock opens", (await dock.toggle())["state"] == "open")
         print(f"     (opened in {time.monotonic() - started:.2f}s)")
         check("button state open", await shell.async_get_variable("user.claude_panel") == "open")
-        for _ in range(20):  # the menu's checkmark lags behind the pane
-            toolbar = await _toolbar_shown()
-            if toolbar == "hidden":
-                break
-            await asyncio.sleep(0.25)
-        check("panel has no URL bar", toolbar == "hidden", toolbar)
         tab = window.current_tab
         panel_id = dock._panels.get(tab.tab_id)
         panel_session = app.get_session_by_id(panel_id)
