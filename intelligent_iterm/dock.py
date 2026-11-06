@@ -1,5 +1,7 @@
 """Bottom-docked panel: an iTerm2 *browser* split pane showing the panel page,
 toggled per tab with Ctrl+Shift+. (Intelligent Terminal's agent-pane shortcut).
+It's created once per tab; hiding maximizes the terminal pane (View > Maximize
+Active Pane), which keeps the panel loaded so showing it again is instant.
 
 The split is left at iTerm2's default size: resizing it via update_layout mixes
 terminal rows with browser-pane points and makes iTerm2 resize the window.
@@ -22,6 +24,7 @@ from .terminal import ItermTerminal
 log = logging.getLogger(__name__)
 
 STATE_VAR = "user.claude_panel"  # per terminal session: "open" / "closed"
+MAXIMIZE_PANE = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
 
 # iTerm2 shows a URL/navigation bar on browser panes. There's no profile key or
 # API for it, only the Web > Show Toolbar menu item (which acts on the focused
@@ -62,11 +65,16 @@ class Dock:
         existing = self._panels.get(tab.tab_id)
         panel = self.app.get_session_by_id(existing) if existing else None
         if panel is not None:
-            await panel.async_close(force=True)
-            del self._panels[tab.tab_id]
-            await _set_state(session, "closed")
+            # Hide/show by maximizing the terminal pane rather than closing the
+            # panel: it stays loaded, so showing it again doesn't flash.
+            current = self.app.get_tab_by_id(tab.tab_id) or tab
+            hidden = any(s.session_id == panel.session_id for s in current.minimized_sessions)
             await session.async_activate()
-            return {"state": "closed"}
+            await iterm2.MainMenu.async_select_menu_item(self.connection, MAXIMIZE_PANE)
+            if hidden:
+                await panel.async_activate()
+            await _set_state(session, "open" if hidden else "closed")
+            return {"state": "open" if hidden else "closed"}
         self._panels.pop(tab.tab_id, None)  # stale: closed by the user
 
         window = session.window
@@ -105,7 +113,7 @@ class Dock:
         stale = []
         for window in (windows if windows is not None else self.app.terminal_windows):
             for tab in window.tabs:
-                for s in tab.sessions:
+                for s in tab.all_sessions:
                     try:
                         props = (await s.async_get_profile()).all_properties
                     except Exception:  # noqa: BLE001
@@ -115,7 +123,7 @@ class Dock:
                             and url.startswith("http://127.0.0.1:") and url != self.url):
                         stale.append((tab, s))
         for tab, panel in stale:
-            terminal = next((x for x in tab.sessions if x.session_id != panel.session_id), None)
+            terminal = next((x for x in tab.all_sessions if x.session_id != panel.session_id), None)
             await panel.async_close(force=True)
             if terminal is not None:
                 await asyncio.sleep(0.3)

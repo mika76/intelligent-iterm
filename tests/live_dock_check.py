@@ -101,9 +101,18 @@ async def main(connection):
               app.current_terminal_window is None
               or app.current_terminal_window.current_tab.current_session.session_id == shell.session_id)
 
-        check("dock closes", (await dock.toggle())["state"] == "closed")
+        check("dock hides", (await dock.toggle())["state"] == "closed")
         await asyncio.sleep(0.5)
-        check("panel session gone", app.get_session_by_id(panel_id) is None and len(tab.sessions) == 1)
+        t = app.get_tab_by_id(tab.tab_id)
+        check("hidden panel stays loaded (minimized)",
+              [s.session_id for s in t.minimized_sessions] == [panel_id] and len(t.sessions) == 1)
+        check("dock shows again", (await dock.toggle(shell))["state"] == "open")
+        await asyncio.sleep(0.5)
+        t = app.get_tab_by_id(tab.tab_id)
+        check("same panel shown again", dock._panels.get(tab.tab_id) == panel_id
+              and len(t.sessions) == 2 and not t.minimized_sessions)
+        await dock.toggle(shell)
+        await asyncio.sleep(0.5)
         check("button state closed", await shell.async_get_variable("user.claude_panel") == "closed")
 
         def same(a, b):
