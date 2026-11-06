@@ -112,6 +112,8 @@ async def main(connection):
         t = app.get_tab_by_id(tab.tab_id)
         check("hidden panel stays loaded (minimized)",
               [s.session_id for s in t.minimized_sessions] == [panel_id] and len(t.sessions) == 1)
+        await dock.forget_closed_panels()
+        check("closed-panel backstop keeps a hidden panel", dock._panels.get(tab.tab_id) == panel_id)
         check("dock shows again", (await dock.toggle(shell))["state"] == "open")
         await asyncio.sleep(0.5)
         t = app.get_tab_by_id(tab.tab_id)
@@ -147,6 +149,18 @@ async def main(connection):
                   "tab sessions:", [x.session_id for x in (app.get_tab_by_id(tab.tab_id) or tab).sessions])
         check("closing the pane resets the button",
               await shell.async_get_variable("user.claude_panel") == "closed" and tab.tab_id not in dock._panels)
+        # The termination notice for a closed pane sometimes never comes; the
+        # layout backstop must catch it anyway.
+        await dock.toggle(shell)
+        await asyncio.sleep(1.0)
+        real_panel = dock._panels[tab.tab_id]
+        dock._panels[tab.tab_id] = "gone-" + real_panel  # as if its notice was lost
+        await dock.forget_closed_panels()
+        check("closed-panel backstop forgets a vanished panel and resets the button",
+              tab.tab_id not in dock._panels
+              and await shell.async_get_variable("user.claude_panel") == "closed")
+        await app.get_session_by_id(real_panel).async_close(force=True)
+        await asyncio.sleep(1.0)
         # A pane iTerm2 restored from a previous run: old URL -> replaced by a fresh panel.
         old = iterm2.LocalWriteOnlyProfile()
         old._simple_set("Custom Command", "Browser")

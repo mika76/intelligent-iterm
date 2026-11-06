@@ -185,6 +185,9 @@ class Dock:
         """Forget panels the user closed themselves (pane ✕) and fix the button
         label; close a panel once the last terminal in its tab has exited, so
         `exit` closes the tab as it would without the panel."""
+        await asyncio.gather(self._watch_terminations(), self._watch_layout())
+
+    async def _watch_terminations(self) -> None:
         async with iterm2.SessionTerminationMonitor(self.connection) as mon:
             while True:
                 gone = await mon.async_get()
@@ -193,6 +196,30 @@ class Dock:
                     await self._session_ended(gone)
                 except Exception:  # noqa: BLE001 - keep watching
                     log.exception("handling ended session failed")
+
+    async def _watch_layout(self) -> None:
+        """Backstop for the termination monitor, whose notification for a closed
+        pane sometimes comes late or not at all: after any layout change, treat
+        a panel whose session is gone as ended."""
+        async with iterm2.LayoutChangeMonitor(self.connection) as mon:
+            while True:
+                await mon.async_get()
+                await asyncio.sleep(0.3)  # let the app object take in the new layout
+                try:
+                    await self.forget_closed_panels()
+                except Exception:  # noqa: BLE001 - keep watching
+                    log.exception("checking for closed panels failed")
+
+    async def forget_closed_panels(self) -> None:
+        # get_session_by_id also finds hidden (minimized) panels.
+        missing = [p for p in self._panels.values() if self.app.get_session_by_id(p) is None]
+        if not missing:
+            return
+        await self.app.async_refresh()  # the cached layout may lag behind (e.g. a pane just split)
+        for panel_id in missing:
+            if panel_id in self._panels.values() and self.app.get_session_by_id(panel_id) is None:
+                log.info("panel %s is gone without a termination notice", panel_id)
+                await self._session_ended(panel_id)
 
     async def _session_ended(self, gone: str) -> None:
         for tab_id, panel_id in list(self._panels.items()):
