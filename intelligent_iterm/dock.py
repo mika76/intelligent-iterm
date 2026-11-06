@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 from typing import Dict, Optional
+from urllib.parse import quote
 
 import iterm2
 
@@ -53,6 +54,10 @@ class Dock:
         self._panels: Dict[str, str] = {}  # tab_id -> panel session_id
         terminal.is_panel = self.is_panel
 
+    def url_for(self, tab_id: str) -> str:
+        """Each tab's pane shows that tab's conversation."""
+        return self.url + "&tab=" + quote(tab_id, safe="")
+
     def is_panel(self, session_id: str) -> bool:
         return session_id in self._panels.values()
 
@@ -82,7 +87,7 @@ class Dock:
         colors = await _color_properties(session)
         profile = iterm2.LocalWriteOnlyProfile()
         profile._simple_set("Custom Command", "Browser")  # pylint: disable=protected-access
-        profile._simple_set("Initial URL", self.url)      # pylint: disable=protected-access
+        profile._simple_set("Initial URL", self.url_for(tab.tab_id))  # pylint: disable=protected-access
         panel = await session.async_split_pane(vertical=False, profile_customizations=profile)
         self._panels[tab.tab_id] = panel.session_id
         # A browser pane starts black and ignores colors passed with the split;
@@ -120,7 +125,7 @@ class Dock:
                         continue
                     url = props.get("Initial URL") or ""
                     if (props.get("Custom Command") == "Browser" and "dock=1" in url
-                            and url.startswith("http://127.0.0.1:") and url != self.url):
+                            and url.startswith("http://127.0.0.1:") and not url.startswith(self.url)):
                         stale.append((tab, s))
         for tab, panel in stale:
             terminal = next((x for x in tab.all_sessions if x.session_id != panel.session_id), None)

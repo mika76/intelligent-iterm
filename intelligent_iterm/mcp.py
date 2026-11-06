@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 SERVER_NAME = "iterm"  # Claude Code names the tools mcp__iterm__<tool>
 DEFAULT_PROTOCOL = "2025-06-18"
 
-ToolFn = Callable[[Dict[str, Any]], Awaitable[str]]
+ToolFn = Callable[[Dict[str, Any], str], Awaitable[str]]  # (arguments, conversation)
 
 
 class Tool:
@@ -36,19 +36,20 @@ class McpServer:
     def allowed_tool_names(self) -> List[str]:
         return [f"mcp__{SERVER_NAME}__{name}" for name in self.tools]
 
-    async def handle_http(self, body: Any) -> Tuple[int, Optional[Dict[str, Any]]]:
-        """One POSTed JSON-RPC message -> (HTTP status, response or None)."""
+    async def handle_http(self, body: Any, conv: str = "main") -> Tuple[int, Optional[Dict[str, Any]]]:
+        """One POSTed JSON-RPC message -> (HTTP status, response or None). `conv` is
+        the conversation whose agent called (from its X-Conversation header)."""
         if not isinstance(body, dict) or "method" not in body:
             return 202, None  # a response/notification from the client: nothing to send
         if "id" not in body:
             return 202, None  # notification (e.g. notifications/initialized)
         try:
-            result = await self._call(body["method"], body.get("params") or {})
+            result = await self._call(body["method"], body.get("params") or {}, conv)
             return 200, {"jsonrpc": "2.0", "id": body["id"], "result": result}
         except KeyError as e:
             return 200, _error(body["id"], -32601, f"unknown method or tool: {e}")
 
-    async def _call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _call(self, method: str, params: Dict[str, Any], conv: str) -> Dict[str, Any]:
         if method == "initialize":
             return {"protocolVersion": params.get("protocolVersion") or DEFAULT_PROTOCOL,
                     "capabilities": {"tools": {}},
@@ -60,7 +61,7 @@ class McpServer:
         if method == "tools/call":
             tool = self.tools[params.get("name")]
             try:
-                text = await tool.fn(params.get("arguments") or {})
+                text = await tool.fn(params.get("arguments") or {}, conv)
                 return {"content": [{"type": "text", "text": text}], "isError": False}
             except ToolError as e:
                 return {"content": [{"type": "text", "text": str(e)}], "isError": True}

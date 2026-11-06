@@ -1,8 +1,10 @@
 """Panel logic: turns UI actions into ACP prompts and agent updates into UI events.
 
 Independent of iTerm2 — the terminal is passed in as an object with
-`get_context(include_screen)`, `insert(text)` and `get_failure(id)`, so this
-can be tested with a fake.
+`get_context(include_screen)`, `insert(text)` and `get_failure(id)`, and
+optionally `active_tab_id()` and `tab_of(session_id)` (one conversation per
+tab; without them there is a single conversation), so this can be tested with
+a fake.
 """
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from . import doctor
 from .acp import AcpClient
 from .mcp import McpServer, Tool, ToolError
-from .web import EventHub
+from .web import MAIN, EventHub
 
 log = logging.getLogger(__name__)
 
@@ -82,25 +84,218 @@ MAX_OUTPUT_CHARS = 12000
 _CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
 
 
+class Conversation:
+    """One chat with its own Claude Code process: one per iTerm2 tab."""
+
+    def __init__(self, panel: "Panel", key: str) -> None:
+        self.panel = panel
+        self.key = key
+        self.agent: Optional[AcpClient] = None
+        self._lock = asyncio.Lock()
+        self.turn: Optional[asyncio.Task] = None
+        self.permissions: Dict[str, asyncio.Future] = {}
+        self.proposals: Dict[str, Dict[str, Any]] = {}  # id -> {command, session_id, future}
+        self.target_session: Optional[str] = None  # where proposals go (Explain: the failing pane)
+        self._hidden_tool_calls: set = set()  # our own propose/read calls: shown as cards instead
+
+    def publish(self, event: Dict[str, Any]) -> None:
+        self.panel.hub.publish(event, self.key)
+
+    @property
+    def busy(self) -> bool:
+        return self.turn is not None and not self.turn.done()
+
+    async def ensure_agent(self) -> AcpClient:
+        async with self._lock:
+            if self.agent and self.agent.alive:
+                return self.agent
+            self.publish({"type": "status", "text": "Starting Claude Code…"})
+            agent = AcpClient(self.panel._agent_command, self.panel._agent_env,
+                              self.on_update, self.on_permission)
+            init = await agent.start()
+            self.panel._agent_version = (init.get("agentInfo") or {}).get("version") or ""
+            ctx = await self.panel.terminal.get_context(include_screen=False)
+            cwd = ctx.get("cwd") if ctx.get("cwd") and os.path.isdir(ctx["cwd"]) else os.path.expanduser("~")
+            servers, allowed = [], None
+            if self.panel.mcp_endpoint:
+                url, token = self.panel.mcp_endpoint
+                servers = [{"type": "http", "name": "iterm", "url": url,
+                            "headers": [{"name": "X-Token", "value": token},
+                                        {"name": "X-Conversation", "value": self.key}]}]
+                allowed = self.panel.mcp.allowed_tool_names()
+            await agent.new_session(cwd, SYSTEM_PROMPT, mcp_servers=servers, allowed_tools=allowed)
+            self.panel._publish_agent(agent.session_info.get("configOptions") or [])
+            self.publish({"type": "status", "text": f"Session started in {cwd}"})
+            self.agent = agent
+            return agent
+
+    async def warm_up(self) -> None:
+        try:
+            await self.ensure_agent()
+        except Exception as e:  # noqa: BLE001 - shown again on the first message
+            log.info("agent warm-up failed: %r", e)
+            self.publish({"type": "status", "text": f"Claude Code didn't start: {e}"})
+
+    async def start_turn(self, text: str, blocks: List[Dict[str, Any]],
+                         label: Optional[str]) -> Dict[str, Any]:
+        if self.busy:
+            raise RuntimeError("Claude is still answering; wait or press Stop")
+        self.publish({"type": "user", "text": text, "context": label})
+        self.turn = asyncio.ensure_future(self._run_turn(blocks))
+        return {}
+
+    async def _run_turn(self, blocks: List[Dict[str, Any]]) -> None:
+        try:
+            agent = await self.ensure_agent()
+            result = await agent.prompt(blocks)
+            self.publish({"type": "turn_end", "stopReason": result.get("stopReason")})
+        except Exception as e:  # noqa: BLE001
+            log.exception("turn failed")
+            self.publish({"type": "error", "message": str(e)})
+            self.publish({"type": "turn_end", "stopReason": "error"})
+        finally:
+            self.cancel_pending()
+
+    async def on_update(self, u: Dict[str, Any]) -> None:
+        kind = u.get("sessionUpdate")
+        content = u.get("content") or {}
+        if kind == "available_commands_update":
+            self.panel.hub.set_sticky("commands", {"type": "commands", "commands": [
+                {"name": c.get("name"), "description": (c.get("description") or "")[:160],
+                 "hint": (c.get("input") or {}).get("hint")}
+                for c in u.get("availableCommands") or []]})
+            return
+        if kind == "config_option_update":
+            self.panel._publish_agent(u.get("configOptions") or [])
+            return
+        if kind in ("tool_call", "tool_call_update"):
+            tid = u.get("toolCallId")
+            title = u.get("title") or ""
+            if "mcp__iterm__" in title or title == "ToolSearch":  # our tools show as cards
+                self._hidden_tool_calls.add(tid)
+            if tid in self._hidden_tool_calls:
+                return
+        if kind == "agent_message_chunk" and content.get("type") == "text":
+            self.publish({"type": "chunk", "text": content["text"]})
+        elif kind == "agent_thought_chunk":
+            self.publish({"type": "thinking"})
+        elif kind in ("tool_call", "tool_call_update"):
+            self.publish({"type": "tool", "id": u.get("toolCallId"),
+                          "title": u.get("title"), "status": u.get("status")})
+
+    async def on_permission(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        pid = self.panel.next_id()
+        fut = asyncio.get_event_loop().create_future()
+        self.permissions[pid] = fut
+        tool = params.get("toolCall") or {}
+        self.publish({
+            "type": "permission", "id": pid, "title": tool.get("title") or "Tool call",
+            "options": [{"optionId": o["optionId"], "name": o["name"], "kind": o.get("kind")}
+                        for o in params.get("options", [])],
+        })
+        try:
+            return await fut
+        finally:
+            self.publish({"type": "permission_done", "id": pid})
+
+    def cancel_pending(self) -> None:
+        for fut in self.permissions.values():
+            if not fut.done():
+                fut.set_result({"outcome": "cancelled"})
+        self.permissions.clear()
+        for p in self.proposals.values():
+            if not p["future"].done():
+                p["future"].set_result("dismissed")
+
+    async def propose(self, command: str, reason: str) -> str:
+        for p in self.proposals.values():  # one at a time: a new one replaces the old
+            if not p["future"].done():
+                p["future"].set_result("dismissed")
+        pid = self.panel.next_id()
+        session_id = self.target_session or getattr(self.panel.terminal, "active_session_id", lambda: None)()
+        fut = asyncio.get_event_loop().create_future()
+        self.proposals[pid] = {"command": command, "session_id": session_id, "future": fut}
+        self.publish({"type": "proposal", "id": pid, "command": command, "reason": reason})
+        try:
+            outcome = await fut
+        finally:
+            if not fut.done():
+                fut.set_result("dismissed")
+            self.publish({"type": "proposal_done", "id": pid, "outcome": fut.result()})
+            self.proposals.pop(pid, None)
+        return outcome
+
+    async def cancel(self) -> None:
+        self.cancel_pending()
+        if self.agent and self.busy:
+            await self.agent.cancel()
+
+    async def stop(self) -> None:
+        await self.cancel()
+        async with self._lock:
+            if self.agent:
+                await self.agent.stop()
+                self.agent = None
+
+
 class Panel:
+    """Routes UI requests and agent tool calls to the conversation they belong to."""
+
     def __init__(self, hub: EventHub, terminal: Any, agent_command: List[str],
                  agent_env: Dict[str, str]) -> None:
         self.hub = hub
         self.terminal = terminal
         self._agent_command = agent_command
         self._agent_env = agent_env
-        self._agent: Optional[AcpClient] = None
-        self._agent_lock = asyncio.Lock()
-        self._turn: Optional[asyncio.Task] = None
-        self._permissions: Dict[str, asyncio.Future] = {}
-        self._perm_ids = itertools.count(1)
-        self._proposals: Dict[str, Dict[str, Any]] = {}  # id -> {command, session_id, future}
-        self._target_session: Optional[str] = None  # where proposals go (Explain: the failing pane)
+        self._conversations: Dict[str, Conversation] = {}
+        self._ids = itertools.count(1)
         self.mcp = McpServer(self._tools())
         self.mcp_endpoint: Optional[tuple] = None  # (url, token), set once the web server runs
-        self._hidden_tool_calls: set = set()  # our own propose/read calls: shown as cards instead
         self._agent_version = ""
         self._checked_setup = False
+        hub.resolve_active = self.active_key
+
+    def next_id(self) -> str:
+        return str(next(self._ids))
+
+    # ---- which conversation ----------------------------------------------------
+
+    def active_key(self) -> str:
+        """The active tab's conversation (the focused terminal's tab)."""
+        fn = getattr(self.terminal, "active_tab_id", None)
+        return (fn() if fn else None) or MAIN
+
+    def key_for_session(self, session_id: Optional[str]) -> str:
+        fn = getattr(self.terminal, "tab_of", None)
+        return (fn(session_id) if fn and session_id else None) or self.active_key()
+
+    def conversation(self, key: Optional[str] = None) -> Conversation:
+        key = key or self.active_key()
+        conv = self._conversations.get(key)
+        if conv is None:
+            conv = self._conversations[key] = Conversation(self, key)
+        return conv
+
+    def _conv(self, body: Dict[str, Any]) -> Conversation:
+        """The page says which conversation it shows (from the last "switch" event)."""
+        return self.conversation(str(body.get("conv") or "") or None)
+
+    def follow_active(self) -> None:
+        """Focus moved: the toolbelt follows the active tab's conversation."""
+        key = self.active_key()
+        if key != self.hub.active:
+            self.hub.follow(key)
+
+    async def prune(self, alive: Any) -> None:
+        """Tabs closed: stop their agents and forget their conversations."""
+        for key in list(self._conversations):
+            if key != MAIN and key not in alive:
+                conv = self._conversations.pop(key)
+                await conv.stop()
+                self.hub.clear_history(key)
+        for key in self.hub.conversations():
+            if key != MAIN and key not in alive:
+                self.hub.clear_history(key)
 
     def routes(self) -> Dict[str, Any]:
         return {
@@ -119,6 +314,7 @@ class Panel:
     # ---- UI endpoints ----------------------------------------------------
 
     async def api_send(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        conv = self._conv(body)
         text = str(body.get("text", "")).strip()
         if not text:
             raise ValueError("empty message")
@@ -129,25 +325,26 @@ class Panel:
             blocks.append({"type": "text", "text": format_context(ctx)})
             label = context_label(ctx)
         blocks.append({"type": "text", "text": text})
-        self._target_session = None
-        return await self._start_turn(text, blocks, label)
+        conv.target_session = None
+        return await conv.start_turn(text, blocks, label)
 
     async def api_explain(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        conv = self._conv(body)
         failure = self.terminal.get_failure(str(body.get("id", "")))
         if failure is None:
             raise ValueError("that command is no longer available")
         ctx = {"cwd": failure.get("cwd"), "shell": failure.get("shell"), "last": failure}
         text = f"Fix `{failure['command']}` (exit {failure['exit']})"
         blocks = [{"type": "text", "text": format_context(ctx)}, {"type": "text", "text": EXPLAIN_PROMPT}]
-        self._target_session = failure.get("session_id")
-        return await self._start_turn(text, blocks, context_label(ctx))
+        conv.target_session = failure.get("session_id")
+        return await conv.start_turn(text, blocks, context_label(ctx))
 
     async def api_insert(self, body: Dict[str, Any]) -> Dict[str, Any]:
         await self.terminal.insert(str(body.get("text", "")))
         return {}
 
     async def api_permission(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        fut = self._permissions.pop(str(body.get("id")), None)
+        fut = self._conv(body).permissions.pop(str(body.get("id")), None)
         if fut and not fut.done():
             option = body.get("optionId")
             fut.set_result({"outcome": "selected", "optionId": option} if option
@@ -156,7 +353,7 @@ class Panel:
 
     async def api_proposal(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """The user's answer to a propose_command card: insert, run or dismiss."""
-        p = self._proposals.get(str(body.get("id")))
+        p = self._conv(body).proposals.get(str(body.get("id")))
         if p is None or p["future"].done():
             raise ValueError("that proposal is no longer pending")
         action = body.get("action")
@@ -167,21 +364,22 @@ class Panel:
             p["future"].set_result("dismissed")
         return {}
 
-    async def api_hello(self, _body: Dict[str, Any]) -> Dict[str, Any]:
+    async def api_hello(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """The page loaded: start Claude Code now so its model and / commands show up."""
-        if self._agent is None:
-            asyncio.ensure_future(self._warm_up())
+        conv = self._conv(body)
+        if conv.agent is None:
+            asyncio.ensure_future(conv.warm_up())
         if not self._checked_setup:  # once per run: show setup problems, if any
             self._checked_setup = True
-            asyncio.ensure_future(self._report_setup(problems_only=True))
+            asyncio.ensure_future(self._report_setup(conv, problems_only=True))
         return {}
 
-    async def api_doctor(self, _body: Dict[str, Any]) -> Dict[str, Any]:
+    async def api_doctor(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """/doctor: the full setup report."""
-        await self._report_setup(problems_only=False)
+        await self._report_setup(self._conv(body), problems_only=False)
         return {}
 
-    async def _report_setup(self, problems_only: bool) -> None:
+    async def _report_setup(self, conv: Conversation, problems_only: bool) -> None:
         try:
             checks = await doctor.all_checks(getattr(self.terminal, "has_shell_integration", None))
         except Exception:  # noqa: BLE001 - never let a check break the panel
@@ -189,14 +387,7 @@ class Panel:
             return
         shown = doctor.problems(checks) if problems_only else checks
         if shown:
-            self.hub.publish({"type": "doctor", "checks": shown, "problemsOnly": problems_only})
-
-    async def _warm_up(self) -> None:
-        try:
-            await self._ensure_agent()
-        except Exception as e:  # noqa: BLE001 - shown again on the first message
-            log.info("agent warm-up failed: %r", e)
-            self.hub.publish({"type": "status", "text": f"Claude Code didn't start: {e}"})
+            conv.publish({"type": "doctor", "checks": shown, "problemsOnly": problems_only})
 
     async def api_open(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """A link in a reply was clicked: open it in the default browser (the
@@ -209,66 +400,16 @@ class Panel:
         await proc.wait()
         return {}
 
-    async def api_cancel(self, _body: Dict[str, Any]) -> Dict[str, Any]:
-        self._cancel_permissions()
-        if self._agent and self._turn and not self._turn.done():
-            await self._agent.cancel()
+    async def api_cancel(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        await self._conv(body).cancel()
         return {}
 
-    async def api_new(self, _body: Dict[str, Any]) -> Dict[str, Any]:
-        await self.api_cancel({})
-        async with self._agent_lock:
-            if self._agent:
-                await self._agent.stop()
-                self._agent = None
-        self.hub.clear_history()
-        self.hub.publish({"type": "reset"})
+    async def api_new(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        conv = self._conv(body)
+        await conv.stop()
+        self.hub.clear_history(conv.key)
+        conv.publish({"type": "reset"})
         return {}
-
-    # ---- agent -------------------------------------------------------------
-
-    async def _ensure_agent(self) -> AcpClient:
-        async with self._agent_lock:
-            if self._agent and self._agent.alive:
-                return self._agent
-            self.hub.publish({"type": "status", "text": "Starting Claude Code…"})
-            agent = AcpClient(self._agent_command, self._agent_env,
-                              self._on_update, self._on_permission)
-            init = await agent.start()
-            self._agent_version = (init.get("agentInfo") or {}).get("version") or ""
-            ctx = await self.terminal.get_context(include_screen=False)
-            cwd = ctx.get("cwd") if ctx.get("cwd") and os.path.isdir(ctx["cwd"]) else os.path.expanduser("~")
-            servers, allowed = [], None
-            if self.mcp_endpoint:
-                url, token = self.mcp_endpoint
-                servers = [{"type": "http", "name": "iterm", "url": url,
-                            "headers": [{"name": "X-Token", "value": token}]}]
-                allowed = self.mcp.allowed_tool_names()
-            await agent.new_session(cwd, SYSTEM_PROMPT, mcp_servers=servers, allowed_tools=allowed)
-            self._publish_agent(agent.session_info.get("configOptions") or [])
-            self.hub.publish({"type": "status", "text": f"Session started in {cwd}"})
-            self._agent = agent
-            return agent
-
-    async def _start_turn(self, text: str, blocks: List[Dict[str, Any]],
-                          label: Optional[str]) -> Dict[str, Any]:
-        if self._turn and not self._turn.done():
-            raise RuntimeError("Claude is still answering; wait or press Stop")
-        self.hub.publish({"type": "user", "text": text, "context": label})
-        self._turn = asyncio.ensure_future(self._run_turn(blocks))
-        return {}
-
-    async def _run_turn(self, blocks: List[Dict[str, Any]]) -> None:
-        try:
-            agent = await self._ensure_agent()
-            result = await agent.prompt(blocks)
-            self.hub.publish({"type": "turn_end", "stopReason": result.get("stopReason")})
-        except Exception as e:  # noqa: BLE001
-            log.exception("turn failed")
-            self.hub.publish({"type": "error", "message": str(e)})
-            self.hub.publish({"type": "turn_end", "stopReason": "error"})
-        finally:
-            self._cancel_permissions()
 
     def _publish_agent(self, options: List[Dict[str, Any]]) -> None:
         """Header line: agent, adapter version and model, like Intelligent Terminal's pane."""
@@ -279,57 +420,6 @@ class Panel:
                 model = (current.get("name") or o.get("currentValue") or "").replace(" (recommended)", "")
         self.hub.set_sticky("agent", {"type": "agent", "name": "Claude Code",
                                       "version": self._agent_version, "model": model})
-
-    async def _on_update(self, u: Dict[str, Any]) -> None:
-        kind = u.get("sessionUpdate")
-        content = u.get("content") or {}
-        if kind == "available_commands_update":
-            self.hub.set_sticky("commands", {"type": "commands", "commands": [
-                {"name": c.get("name"), "description": (c.get("description") or "")[:160],
-                 "hint": (c.get("input") or {}).get("hint")}
-                for c in u.get("availableCommands") or []]})
-            return
-        if kind == "config_option_update":
-            self._publish_agent(u.get("configOptions") or [])
-            return
-        if kind in ("tool_call", "tool_call_update"):
-            tid = u.get("toolCallId")
-            title = u.get("title") or ""
-            if "mcp__iterm__" in title or title == "ToolSearch":  # our tools show as cards
-                self._hidden_tool_calls.add(tid)
-            if tid in self._hidden_tool_calls:
-                return
-        if kind == "agent_message_chunk" and content.get("type") == "text":
-            self.hub.publish({"type": "chunk", "text": content["text"]})
-        elif kind == "agent_thought_chunk":
-            self.hub.publish({"type": "thinking"})
-        elif kind in ("tool_call", "tool_call_update"):
-            self.hub.publish({"type": "tool", "id": u.get("toolCallId"),
-                              "title": u.get("title"), "status": u.get("status")})
-
-    async def _on_permission(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        pid = str(next(self._perm_ids))
-        fut = asyncio.get_event_loop().create_future()
-        self._permissions[pid] = fut
-        tool = params.get("toolCall") or {}
-        self.hub.publish({
-            "type": "permission", "id": pid, "title": tool.get("title") or "Tool call",
-            "options": [{"optionId": o["optionId"], "name": o["name"], "kind": o.get("kind")}
-                        for o in params.get("options", [])],
-        })
-        try:
-            return await fut
-        finally:
-            self.hub.publish({"type": "permission_done", "id": pid})
-
-    def _cancel_permissions(self) -> None:
-        for fut in self._permissions.values():
-            if not fut.done():
-                fut.set_result({"outcome": "cancelled"})
-        self._permissions.clear()
-        for p in self._proposals.values():
-            if not p["future"].done():
-                p["future"].set_result("dismissed")
 
     # ---- tools the agent calls (MCP) ------------------------------------------
 
@@ -352,46 +442,33 @@ class Panel:
                  self._read_terminal),
         ]
 
-    async def _propose(self, args: Dict[str, Any]) -> str:
+    async def _propose(self, args: Dict[str, Any], conv: str) -> str:
         command = str(args.get("command") or "").strip()
         reason = str(args.get("reason") or "").strip()
         if not command:
             raise ToolError("command is empty")
         if _CONTROL.search(command):
             raise ToolError("Propose a single line without control characters; join steps with && or ;")
-        for p in self._proposals.values():  # one at a time: a new one replaces the old
-            if not p["future"].done():
-                p["future"].set_result("dismissed")
-        pid = str(next(self._perm_ids))
-        session_id = self._target_session or getattr(self.terminal, "active_session_id", lambda: None)()
-        fut = asyncio.get_event_loop().create_future()
-        self._proposals[pid] = {"command": command, "session_id": session_id, "future": fut}
-        self.hub.publish({"type": "proposal", "id": pid, "command": command, "reason": reason})
-        try:
-            outcome = await fut
-        finally:
-            if not fut.done():
-                fut.set_result("dismissed")
-            self.hub.publish({"type": "proposal_done", "id": pid, "outcome": fut.result()})
-            self._proposals.pop(pid, None)
+        outcome = await self.conversation(conv).propose(command, reason)
         return {"inserted": "The user inserted the command at their prompt (not run yet).",
                 "ran": "The user ran the command in their terminal.",
                 "dismissed": "The user dismissed the proposal."}[outcome]
 
-    async def _read_terminal(self, args: Dict[str, Any]) -> str:
+    async def _read_terminal(self, args: Dict[str, Any], _conv: str) -> str:
         return format_context(await self.terminal.get_context(include_screen=bool(args.get("screen"))))
 
     # ---- terminal → UI -----------------------------------------------------
 
     def command_failed(self, failure: Dict[str, Any]) -> None:
-        """Called by the terminal watcher when a command exits non-zero."""
-        self.hub.publish({"type": "failed_command", "id": failure["id"],
-                          "command": failure["command"], "exit": failure["exit"],
-                          "cwd": failure.get("cwd")})
+        """Called by the terminal watcher when a command exits non-zero: shown in
+        the conversation of the tab it ran in."""
+        self.conversation(self.key_for_session(failure.get("session_id"))).publish(
+            {"type": "failed_command", "id": failure["id"], "command": failure["command"],
+             "exit": failure["exit"], "cwd": failure.get("cwd")})
 
     async def shutdown(self) -> None:
-        if self._agent:
-            await self._agent.stop()
+        for conv in list(self._conversations.values()):
+            await conv.stop()
 
 
 def format_context(ctx: Dict[str, Any]) -> str:

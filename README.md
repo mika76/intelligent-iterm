@@ -64,7 +64,9 @@ iTerm2 pane / toolbelt (webview) ──HTTP/SSE──▶ intelligent_iterm (Pyth
      to skip the step.
    - **In the toolbelt** on the right (View > Toolbelt > Claude).
 
-   Both show the same conversation.
+   **Each tab has its own conversation**, with its own Claude Code process. A tab's
+   docked panel always shows that tab's conversation; the toolbelt shows the active
+   tab's and switches when you change tabs. Closing a tab ends its conversation.
 2. **context** (header, on by default) sends the active session's directory, shell, window
    title, last command, exit status and output with each message, as JSON. If shell
    integration has no command history, it sends the last 60 lines of the terminal instead.
@@ -177,6 +179,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```
 
 ```bash
+.venv/bin/python tests/live_tabs_check.py    # live check: per-tab conversations in a two-tab window
+```
+
+```bash
 .venv/bin/python -m intelligent_iterm.main   # run the panel from a shell instead of AutoLaunch
 ```
 
@@ -225,14 +231,15 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **Ctrl+Shift+.** is captured from every terminal session while the script runs, so
   programs in the terminal no longer receive it.
 
-- **One conversation, one agent process.** It starts in the active session's directory
-  when you send the first message. "New chat" starts a fresh one, for example after you
-  `cd` elsewhere.
+- **One agent process per tab.** Each starts in the active session's directory when you
+  open the panel or send the first message in that tab. "New chat" starts a fresh one, for
+  example after you `cd` elsewhere. Several tabs with open panels mean several Claude Code
+  processes.
 - **"Active session"** means the focused terminal in the frontmost iTerm2 window. When you
   are typing in the docked panel, it means the terminal you last used in that tab. Insert
   goes there and focuses it, which is not necessarily the session the failure came from.
-- **Failure cards** appear only for commands that end while their session is active, and
-  only with shell integration (OSC 133 marks). Commands that ran before the script started
+- **Failure cards** appear in the conversation of the tab the command ran in, even if
+  that tab isn't active, and only with shell integration (OSC 133 marks). Commands that ran before the script started
   are still used for context, via prompt history.
 - **Output capture** is limited to the last 200 lines of a command, and to whatever is
   still in scrollback. Full-screen apps (vim, less, top) don't produce usable output.
@@ -245,7 +252,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   settings UI. The session runs in Manual mode regardless of your Claude Code default.
 - **First message cost:** Claude Code loads your usual configuration (CLAUDE.md, skills,
   MCP servers), so the first turn has a sizeable cached prompt.
-- **Multiple iTerm2 windows** share one panel conversation.
+- **Split panes in one tab** share that tab's conversation; the context comes from the
+  pane you last used.
 
 ## License
 

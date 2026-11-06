@@ -72,6 +72,8 @@ async def main(connection):
                 break
             await asyncio.sleep(0.25)
         check("panel page loaded and connected", connected)
+        check("panel page shows its own tab's conversation",
+              (tab.tab_id, True) in hub._clients.values(), list(hub._clients.values()))
         check("panel page title", (await panel_session.async_get_variable("session.name") or "").startswith("Claude"),
               await panel_session.async_get_variable("session.name"))
         await asyncio.sleep(0.5)
@@ -152,7 +154,7 @@ async def main(connection):
         fresh = app.get_session_by_id(dock._panels.get(tab.tab_id, ""))
         fresh_url = (await fresh.async_get_profile()).all_properties.get("Initial URL") if fresh else None
         check("restored panel replaced", replaced == 1 and app.get_session_by_id(stale.session_id) is None
-              and fresh_url == dock.url, (replaced, fresh_url))
+              and fresh_url == dock.url_for(tab.tab_id), (replaced, fresh_url))
         await dock.toggle(shell)
 
         # Typing `exit` in the terminal closes the panel too, and so the window.

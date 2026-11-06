@@ -52,6 +52,17 @@ class ItermTerminal:
         s = self.active_session()
         return s.session_id if s else None
 
+    def active_tab_id(self) -> Optional[str]:
+        s = self.active_session()
+        return s.tab.tab_id if s is not None and s.tab is not None else None
+
+    def tab_of(self, session_id: str) -> Optional[str]:
+        s = self.app.get_session_by_id(session_id)
+        return s.tab.tab_id if s is not None and s.tab is not None else None
+
+    def tab_ids(self) -> set:
+        return {t.tab_id for w in self.app.terminal_windows for t in w.tabs}
+
     def remember_terminal(self, tab_id: str, session_id: str) -> None:
         self._last_in_tab[tab_id] = session_id
 
@@ -83,9 +94,11 @@ class ItermTerminal:
             "font": font or None, "size": float(size) if size.replace(".", "").isdigit() else None,
         }
 
-    async def watch_focus(self, on_theme: Callable[[Dict[str, Any]], None]) -> None:
-        """Track the last focused terminal per tab, and re-send the theme whenever
-        the active session (and so maybe its profile) changes."""
+    async def watch_focus(self, on_theme: Callable[[Dict[str, Any]], None],
+                          on_focus: Optional[Callable[[], None]] = None) -> None:
+        """Track the last focused terminal per tab, re-send the theme whenever
+        the active session (and so maybe its profile) changes, and tell
+        `on_focus` that the active tab may have changed."""
         last = None
         current = self.active_session()
         if current is not None:
@@ -102,6 +115,11 @@ class ItermTerminal:
                 update = await mon.async_get_next_update()
                 if update.active_session_changed:
                     self._remember_focus(update.active_session_changed.session_id)
+                if on_focus is not None:
+                    try:
+                        on_focus()
+                    except Exception:  # noqa: BLE001 - keep watching
+                        log.exception("focus handler failed")
 
     # ---- watching for finished commands -------------------------------------
 
@@ -136,12 +154,7 @@ class ItermTerminal:
             self._failures[record["id"]] = record
             while len(self._failures) > KEEP_FAILURES:
                 self._failures.popitem(last=False)
-            if self._is_active(session_id):
-                self.on_failure(record)
-
-    def _is_active(self, session_id: str) -> bool:
-        s = self.active_session()
-        return s is not None and s.session_id == session_id
+            self.on_failure(record)  # shown in that tab's conversation
 
     async def _record(self, session_id: str, prompt: iterm2.Prompt, status: Optional[int]) -> Dict[str, Any]:
         session = self.app.get_session_by_id(session_id)

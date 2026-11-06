@@ -23,45 +23,77 @@ STATIC = Path(__file__).parent / "static"
 HISTORY_LIMIT = 1000
 
 
+MAIN = "main"  # the conversation key when the terminal has no tabs (tests, dev server)
+
+
 class EventHub:
-    """Fan-out of panel events to SSE clients, with replay so the webview can reload."""
+    """Fan-out of panel events to SSE clients, with replay so the webview can reload.
+
+    Chat history is kept per conversation (one per iTerm2 tab). A client either
+    shows one conversation for good (the docked pane of a tab) or follows the
+    active tab (the toolbelt): when the active tab changes, followers get a
+    "switch" event and the other conversation's history."""
 
     def __init__(self) -> None:
-        self._clients: List[asyncio.Queue] = []
-        self._history: List[Dict[str, Any]] = []
+        self._clients: Dict[asyncio.Queue, Tuple[str, bool]] = {}  # queue -> (conv, pinned)
+        self._history: Dict[str, List[Dict[str, Any]]] = {}
         self._sticky: Dict[str, Dict[str, Any]] = {}  # latest event per key, e.g. theme
+        self.active = MAIN  # what followers show
+        self.resolve_active: Optional[Callable[[], str]] = None  # set by Panel: the active tab now
 
     def get_sticky(self, key: str) -> Optional[Dict[str, Any]]:
         return self._sticky.get(key)
 
     def set_sticky(self, key: str, event: Dict[str, Any]) -> None:
-        """Latest-value state (not chat history): replayed first, survives New chat."""
+        """Latest-value state shared by every conversation (theme, agent info):
+        replayed first, survives New chat."""
         self._sticky[key] = event
         for q in self._clients:
             q.put_nowait(event)
 
-    def publish(self, event: Dict[str, Any]) -> None:
-        last = self._history[-1] if self._history else None
+    def publish(self, event: Dict[str, Any], conv: str = MAIN) -> None:
+        history = self._history.setdefault(conv, [])
+        last = history[-1] if history else None
         if event["type"] == "chunk" and last and last["type"] == "chunk":
             # Store streamed text as one event so replay stays short.
-            self._history[-1] = {"type": "chunk", "text": last["text"] + event["text"]}
+            history[-1] = {"type": "chunk", "text": last["text"] + event["text"]}
         else:
-            self._history.append(event)
-        del self._history[:-HISTORY_LIMIT]
-        for q in self._clients:
-            q.put_nowait(event)
+            history.append(event)
+        del history[:-HISTORY_LIMIT]
+        for q, (shown, _pinned) in self._clients.items():
+            if shown == conv:
+                q.put_nowait(event)
 
-    def clear_history(self) -> None:
-        self._history.clear()
+    def clear_history(self, conv: str = MAIN) -> None:
+        self._history.pop(conv, None)
 
-    def subscribe(self) -> Tuple[asyncio.Queue, List[Dict[str, Any]]]:
+    def conversations(self) -> List[str]:
+        return list(self._history)
+
+    def _backlog(self, conv: str) -> List[Dict[str, Any]]:
+        return ([{"type": "switch", "conv": conv}] + list(self._sticky.values())
+                + list(self._history.get(conv, [])))
+
+    def subscribe(self, conv: Optional[str] = None) -> Tuple[asyncio.Queue, List[Dict[str, Any]]]:
+        """conv: show that conversation for good; None: follow the active tab."""
         q: asyncio.Queue = asyncio.Queue()
-        self._clients.append(q)
-        return q, list(self._sticky.values()) + list(self._history)
+        if conv is None and self.resolve_active is not None:
+            self.active = self.resolve_active()
+        shown = conv or self.active
+        self._clients[q] = (shown, conv is not None)
+        return q, self._backlog(shown)
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
-        if q in self._clients:
-            self._clients.remove(q)
+        self._clients.pop(q, None)
+
+    def follow(self, conv: str) -> None:
+        """The active tab changed: move followers to its conversation."""
+        self.active = conv
+        for q, (shown, pinned) in list(self._clients.items()):
+            if not pinned and shown != conv:
+                self._clients[q] = (conv, False)
+                for ev in self._backlog(conv):
+                    q.put_nowait(ev)
 
 
 class WebServer:
@@ -114,7 +146,7 @@ class WebServer:
                 return await self._send(writer, 403, b"bad token", "text/plain")
 
             if method == "GET" and url.path == "/events":
-                return await self._sse(writer)
+                return await self._sse(writer, (query.get("tab") or [""])[0] or None)
 
             if url.path == "/mcp" and self.mcp is not None:
                 return await self._mcp(method, headers, reader, writer)
@@ -149,15 +181,15 @@ class WebServer:
         except ValueError:
             return await self._send_json(writer, 400, {"jsonrpc": "2.0", "id": None,
                                                        "error": {"code": -32700, "message": "parse error"}})
-        status, response = await self.mcp.handle_http(body)
+        status, response = await self.mcp.handle_http(body, headers.get("x-conversation") or MAIN)
         if response is None:
             return await self._send(writer, status, b"", "text/plain")
         await self._send_json(writer, status, response)
 
-    async def _sse(self, writer: asyncio.StreamWriter) -> None:
+    async def _sse(self, writer: asyncio.StreamWriter, conv: Optional[str]) -> None:
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
                      b"Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n")
-        q, backlog = self.hub.subscribe()
+        q, backlog = self.hub.subscribe(conv)
         try:
             for ev in backlog:
                 writer.write(_sse_frame(ev))

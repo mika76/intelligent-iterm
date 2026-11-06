@@ -179,6 +179,10 @@ const token = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
 const log = $("log"), input = $("input"), sendBtn = $("send");
 let agentCommands = [];
+// The conversation this page shows: its tab's, or (toolbelt) the active tab's.
+// The server says which in a "switch" event; every request names it.
+const tabParam = new URLSearchParams(location.search).get("tab") || "";
+let conv = tabParam;
 let busy = false, agentEl = null, agentText = "", thinkingEl = null, lastFailure = null;
 
 // ---- small helpers -------------------------------------------------------
@@ -189,7 +193,7 @@ function store(key, value) {
 async function api(path, body) {
   const res = await fetch(path, {
     method: "POST", headers: { "Content-Type": "application/json", "X-Token": token },
-    body: JSON.stringify(body || {}),
+    body: JSON.stringify(Object.assign({ conv }, body || {})),
   });
   const data = await res.json().catch(() => ({ ok: false, error: res.statusText }));
   if (!data.ok) note(data.error || "Request failed", "error");
@@ -419,6 +423,9 @@ function handle(ev) {
   switch (ev.type) {
     case "theme":
       applyTheme(ev); break;
+    case "switch":
+      conv = ev.conv;
+      log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure(); break;
     case "reset":
       log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure(); break;
     case "status":
@@ -517,7 +524,8 @@ function handle(ev) {
 }
 
 function connect() {
-  const es = new EventSource("/events?t=" + encodeURIComponent(token));
+  const es = new EventSource("/events?t=" + encodeURIComponent(token)
+    + (tabParam ? "&tab=" + encodeURIComponent(tabParam) : ""));
   es.onopen = () => {
     // The server replays theme + the whole conversation on every (re)connect.
     log.replaceChildren(); agentEl = null; thinkingEl = null; setBusy(false); hideFailure();

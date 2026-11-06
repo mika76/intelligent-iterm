@@ -70,6 +70,18 @@ async def _retry_while_duplicate(register, what: str) -> None:
             await asyncio.sleep(1)
 
 
+async def _prune_closed_tabs(connection: iterm2.Connection, terminal: ItermTerminal, panel: Panel) -> None:
+    """Each tab has its own conversation; when a tab closes, stop its agent."""
+    async with iterm2.LayoutChangeMonitor(connection) as mon:
+        while True:
+            await mon.async_get()
+            await asyncio.sleep(0.5)  # let the app object take in the new layout first
+            try:
+                await panel.prune(terminal.tab_ids())
+            except Exception:  # noqa: BLE001 - keep watching
+                log.exception("pruning conversations failed")
+
+
 async def main(connection: iterm2.Connection) -> None:
     os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
     with open(PID_FILE, "w") as f:
@@ -115,7 +127,8 @@ async def main(connection: iterm2.Connection) -> None:
     except Exception:  # noqa: BLE001 - never block startup on this
         log.exception("could not replace restored panels")
     asyncio.ensure_future(dock.watch_closed_panels())
-    asyncio.ensure_future(terminal.watch_focus(publish_theme))
+    asyncio.ensure_future(terminal.watch_focus(publish_theme, panel.follow_active))
+    asyncio.ensure_future(_prune_closed_tabs(connection, terminal, panel))
     try:
         await terminal.watch()
         await asyncio.Event().wait()  # keep running; iTerm2 stops us on quit
