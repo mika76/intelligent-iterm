@@ -672,6 +672,40 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); api("/api/dock");
   }
 });
+// Typing anywhere in the panel goes to the input: clicking a message, a card or a
+// button takes the focus away from it. Shortcuts (⌘C on a selection…) are left alone.
+function typesText(el) {
+  return el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.isContentEditable);
+}
+function focusInputAtEnd() {
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+function typeIntoInput(text) {
+  input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
+  input.dispatchEvent(new Event("input"));
+}
+document.addEventListener("keydown", (e) => {
+  if (typesText(document.activeElement) || e.isComposing || e.defaultPrevented) return;
+  if (e.metaKey && e.key.toLowerCase() === "v" && !e.ctrlKey && !e.altKey) {  // paste lands in the input
+    focusInputAtEnd();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.key.length !== 1) return;  // shortcuts, arrows, Escape…
+  if (document.activeElement && document.activeElement.tagName === "BUTTON" && e.key === " ") return;
+  const before = input.value;
+  focusInputAtEnd();
+  // Most engines deliver this key to the newly focused input; if this one didn't, add it.
+  setTimeout(() => { if (input.value === before) typeIntoInput(e.key); }, 0);
+});
+document.addEventListener("paste", (e) => {
+  if (typesText(document.activeElement)) return;
+  const text = e.clipboardData && e.clipboardData.getData("text/plain");
+  if (!text) return;
+  e.preventDefault();
+  focusInputAtEnd();
+  typeIntoInput(text);
+});
 $("attach").checked = store("attach") !== "0";
 $("attach").onchange = () => store("attach", $("attach").checked ? "1" : "0");
 connect();

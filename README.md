@@ -124,6 +124,9 @@ The agent prompts (system prompt and the Explain/fix instructions) are adapted f
 `terminal-agent.md` and `auto-fix.md` (MIT). Its tools reach the panel through a small
 MCP server at `/mcp` on the panel's local server.
 
+Typing anywhere in the panel goes to the input, even after you've clicked a message,
+a card or a button; ⌘V pastes there too. Shortcuts such as ⌘C on selected text still work.
+
 The panel takes its colors and font from the active session's iTerm2 profile, and updates
 when you switch to a session with a different profile, so it looks like part of the terminal.
 
@@ -212,6 +215,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 ```bash
 .venv/bin/python tests/live_tabs_check.py    # live check: per-tab conversations in a two-tab window
+```
+
+```bash
+.venv/bin/python tests/live_focus_check.py   # live check: typing off-focus reaches the input (presses keys)
 ```
 
 ```bash
