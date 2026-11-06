@@ -190,12 +190,20 @@ class ItermTerminal:
     async def _shell(self, session: iterm2.Session) -> Optional[str]:
         """The pane's shell (zsh, bash, fish…), so suggestions use its syntax."""
         try:
-            pid = await session.async_get_variable("pid")
+            pid = int(await session.async_get_variable("pid"))
             proc = await asyncio.create_subprocess_exec(
-                "/bin/ps", "-o", "comm=", "-p", str(int(pid)),
+                "/bin/ps", "-A", "-o", "pid=,ppid=,comm=",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await asyncio.wait_for(proc.communicate(), 2)
-            name = os.path.basename(out.decode().strip()).lstrip("-")
+            procs = {}
+            for line in out.decode().splitlines():
+                parts = line.split(None, 2)
+                if len(parts) == 3:
+                    procs[int(parts[0])] = (int(parts[1]), os.path.basename(parts[2]).lstrip("-"))
+            # The pane runs /usr/bin/login, which starts the shell as its child.
+            name = procs.get(pid, (0, ""))[1]
+            if name == "login":
+                name = next((n for p, (pp, n) in procs.items() if pp == pid), name)
             return name or None
         except Exception:  # noqa: BLE001 - optional
             return None
